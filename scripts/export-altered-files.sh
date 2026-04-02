@@ -20,9 +20,12 @@ MANIFEST_FILES=(
   "components/crm/pipeline-board.tsx"
   "components/crm/leads-table.tsx"
   "lib/pipeline-utils.ts"
+  "lib/types.ts"
   "package.json"
+  "pnpm-lock.yaml"
   ".npmrc"
   ".gitignore"
+  "scripts/024_add_lead_payment_fields.sql"
   "scripts/export-altered-files.sh"
   "scripts/export-full-project.sh"
 )

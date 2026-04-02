@@ -120,6 +120,7 @@ export function ReportsDashboard({
 }: ReportsDashboardProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [filterMode, setFilterMode] = useState<"campaign" | "range">("campaign");
+  const [selectedSourceId, setSelectedSourceId] = useState<string>("all");
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(
     initialCampaigns.find((c) => {
       const today = new Date().toISOString().slice(0, 10);
@@ -227,6 +228,16 @@ export function ReportsDashboard({
     });
   }, [leads, selectedCampaign, filterMode, rangeData]);
 
+  const sourceFilteredLeads = useMemo(() => {
+    if (selectedSourceId === "all") return campaignLeads;
+    return campaignLeads.filter((lead) => lead.source_id === selectedSourceId);
+  }, [campaignLeads, selectedSourceId]);
+
+  const leadSourceById = useMemo(
+    () => new Map(leads.map((lead) => [lead.id, lead.source_id])),
+    [leads]
+  );
+
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
 
   const periodBounds = useMemo(() => {
@@ -252,10 +263,10 @@ export function ReportsDashboard({
         ? rangeData?.totalInvestment || 0
         : selectedCampaign?.budget || 0;
 
-    const totalLeads = campaignLeads.length;
+    const totalLeads = sourceFilteredLeads.length;
 
     // Qualificados: leads com tag contendo "QUALIFICADO" (case insensitive)
-    const qualifiedLeads = campaignLeads.filter((lead) =>
+    const qualifiedLeads = sourceFilteredLeads.filter((lead) =>
       lead.lead_tags?.some((lt) =>
         lt.tags.name.toUpperCase().includes("QUALIFICADO")
       )
@@ -264,7 +275,7 @@ export function ReportsDashboard({
     const qualificationRate = totalLeads > 0 ? (qualifiedCount / totalLeads) * 100 : 0;
 
     // Coorte: leads criados no período que já estão em "Venda Feita" (taxa lead→venda da coorte)
-    const cohortWonLeads = campaignLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
+    const cohortWonLeads = sourceFilteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
 
     // Vendas / faturamento / CAC: ganhos que "tocam" o período (criados OU atualizados na janela).
     // Assim entram fechamentos feitos no período mesmo se o lead entrou antes da campanha.
@@ -273,27 +284,52 @@ export function ReportsDashboard({
         ? leads.filter(
             (l) =>
               !l.is_lost &&
+              (selectedSourceId === "all" || l.source_id === selectedSourceId) &&
               l.column_id === wonColumn.id &&
               leadTouchesPeriod(l, periodBounds.start, periodBounds.end)
           )
         : [];
     const totalSales = salesLeads.length;
     const revenue = salesLeads.reduce((sum, l) => sum + Number(l.deal_value || 0), 0);
+    const cashIn = salesLeads.reduce((sum, l) => {
+      const total = Number(l.deal_value || 0);
+      const model = l.payment_model;
+      if (!model || model === "full") return sum + total;
+      const received = Number(l.amount_received || 0);
+      return sum + Math.min(Math.max(received, 0), total);
+    }, 0);
+    const provisioned = Math.max(revenue - cashIn, 0);
     const avgTicket = totalSales > 0 ? revenue / totalSales : 0;
 
     // Reuniões: (1) lead pertence à coorte do período OU (2) data/cadastro da reunião na janela.
     // Assim entram calls agendadas depois do fim da campanha para leads gerados na campanha.
-    const cohortLeadIds = new Set(campaignLeads.map((l) => l.id));
+    const cohortLeadIds = new Set(sourceFilteredLeads.map((l) => l.id));
     const activeMeetings = meetings.filter((m) => {
       if (m.status === "cancelled") return false;
       const forCohortLead = m.lead_id != null && cohortLeadIds.has(m.lead_id);
+      const sourceMatches =
+        selectedSourceId === "all" ||
+        (m.lead_id != null && leadSourceById.get(m.lead_id) === selectedSourceId);
       const inTimeWindow =
         periodBounds != null &&
         meetingTouchesPeriod(m, periodBounds.start, periodBounds.end);
-      return forCohortLead || inTimeWindow;
+      return sourceMatches && (forCohortLead || inTimeWindow);
     });
 
     const totalCalls = activeMeetings.length;
+    const leadsWithMeetingIds = new Set(
+      activeMeetings
+        .map((m) => m.lead_id)
+        .filter((id): id is string => Boolean(id))
+    );
+    const noShowLeadIds = new Set(
+      activeMeetings
+        .filter((m) => m.status === "no_show" && m.lead_id)
+        .map((m) => m.lead_id as string)
+    );
+    const noShowLeadsCount = noShowLeadIds.size;
+    const noShowRate =
+      leadsWithMeetingIds.size > 0 ? (noShowLeadsCount / leadsWithMeetingIds.size) * 100 : 0;
 
     const soldLeadIds = new Set(salesLeads.map((l) => l.id));
     const meetingsWithSoldLead = activeMeetings.filter(
@@ -315,11 +351,8 @@ export function ReportsDashboard({
     const leadToCallRate = totalLeads > 0 ? (totalCalls / totalLeads) * 100 : 0;
     const callsPerSale =
       totalSales > 0 ? meetingsConvertedCount / totalSales : 0;
-    const qualifiedWonCount = cohortWonLeads.filter((l) =>
-      l.lead_tags?.some((lt) => lt.tags.name.toUpperCase().includes("QUALIFICADO"))
-    ).length;
     const qualifiedToSaleRate =
-      qualifiedCount > 0 ? (qualifiedWonCount / qualifiedCount) * 100 : 0;
+      qualifiedCount > 0 ? (totalSales / qualifiedCount) * 100 : 0;
 
     const avgClosingTime =
       salesLeads.length > 0
@@ -332,7 +365,8 @@ export function ReportsDashboard({
           }, 0) / salesLeads.length
         : 0;
 
-    const roi = investment > 0 ? ((revenue - investment) / investment) * 100 : 0;
+    // ROI em múltiplo (x): caixa recebido dividido pelo investimento.
+    const roi = investment > 0 ? cashIn / investment : 0;
 
     return {
       investment,
@@ -341,6 +375,8 @@ export function ReportsDashboard({
       qualificationRate,
       totalSales,
       revenue,
+      cashIn,
+      provisioned,
       avgTicket,
       totalCalls,
       cpl,
@@ -351,14 +387,18 @@ export function ReportsDashboard({
       callToSaleRate,
       leadToCallRate,
       callsPerSale,
+      noShowLeadsCount,
+      noShowRate,
       qualifiedToSaleRate,
       avgClosingTime,
       roi,
     };
   }, [
-    campaignLeads,
+    sourceFilteredLeads,
     leads,
     selectedCampaign,
+    selectedSourceId,
+    leadSourceById,
     wonColumn,
     periodBounds,
     meetings,
@@ -371,21 +411,21 @@ export function ReportsDashboard({
     return columns
       .map((col) => ({
         name: col.name,
-        leads: campaignLeads.filter((l) => l.column_id === col.id).length,
+        leads: sourceFilteredLeads.filter((l) => l.column_id === col.id).length,
         color: col.color,
       }))
       .filter((d) => d.leads > 0);
-  }, [campaignLeads, columns]);
+  }, [sourceFilteredLeads, columns]);
 
   // Gráfico: leads por fonte
   const sourceData = useMemo(() => {
     return sources
       .map((source) => ({
         name: source.name,
-        value: campaignLeads.filter((l) => l.source_id === source.id).length,
+        value: sourceFilteredLeads.filter((l) => l.source_id === source.id).length,
       }))
       .filter((d) => d.value > 0);
-  }, [campaignLeads, sources]);
+  }, [sourceFilteredLeads, sources]);
 
   const isCampaignActive = selectedCampaign
     ? (() => {
@@ -441,6 +481,25 @@ export function ReportsDashboard({
                 <Calendar className="w-3.5 h-3.5" />
                 Por Range de Datas
               </Button>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
+              <div className="w-full sm:max-w-sm space-y-1">
+                <p className="text-sm font-medium">Fonte do lead</p>
+                <Select value={selectedSourceId} onValueChange={setSelectedSourceId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Todas as fontes" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as fontes</SelectItem>
+                    {sources.map((source) => (
+                      <SelectItem key={source.id} value={source.id}>
+                        {source.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Filtro por campanha */}
@@ -616,18 +675,24 @@ export function ReportsDashboard({
             {/* Bloco 3 — Resultado */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Resultado</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <MetricCard title="Faturamento" icon={DollarSign} iconClass="text-green-600">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                <MetricCard title="Valor Contratado" icon={DollarSign} iconClass="text-green-600">
                   <span className="text-green-600"><AnimatedCurrency value={metrics.revenue} /></span>
+                </MetricCard>
+                <MetricCard title="Entrou no Caixa" icon={DollarSign} iconClass="text-emerald-600">
+                  <span className="text-emerald-600"><AnimatedCurrency value={metrics.cashIn} /></span>
+                </MetricCard>
+                <MetricCard title="Provisionado" icon={DollarSign} iconClass="text-amber-600">
+                  <span className="text-amber-600"><AnimatedCurrency value={metrics.provisioned} /></span>
                 </MetricCard>
                 <MetricCard title="Ticket Médio" icon={DollarSign}>
                   <AnimatedCurrency value={metrics.avgTicket} />
                 </MetricCard>
                 <MetricCard title="ROI" icon={TrendingUp} iconClass="text-green-600"
-                  sub="Retorno sobre investimento">
+                  sub="Caixa recebido ÷ investimento">
                   {metrics.investment > 0 ? (
-                    <span className={metrics.roi >= 0 ? "text-green-600" : "text-red-600"}>
-                      <AnimatedNumber value={metrics.roi} decimals={1} />%
+                    <span className={metrics.roi >= 1 ? "text-green-600" : "text-red-600"}>
+                      <AnimatedNumber value={metrics.roi} decimals={2} />x
                     </span>
                   ) : (
                     <span className="text-muted-foreground text-base">N/A</span>
@@ -643,13 +708,13 @@ export function ReportsDashboard({
             {/* Bloco 4 — Taxas de Conversão */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Taxas de Conversão</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <MetricCard title="Lead → Venda" icon={Percent}
                   sub="Leads criados no período que já estão ganhos">
                   <AnimatedNumber value={metrics.leadToSaleRate} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Qualificado → Venda" icon={Percent}
-                  sub="De leads qualificados">
+                  sub="Vendas ÷ leads qualificados">
                   <AnimatedNumber value={metrics.qualifiedToSaleRate} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Reunião → Venda" icon={Percent}
@@ -659,6 +724,10 @@ export function ReportsDashboard({
                 <MetricCard title="Reuniões p/ Venda" icon={Phone}
                   sub="Reuniões na janela (lead ganho) ÷ vendas">
                   <AnimatedNumber value={metrics.callsPerSale} decimals={1} />
+                </MetricCard>
+                <MetricCard title="Taxa de No-show" icon={AlertCircle}
+                  sub={`${metrics.noShowLeadsCount} lead(s) não compareceram`}>
+                  <AnimatedNumber value={metrics.noShowRate} decimals={1} />%
                 </MetricCard>
               </div>
             </div>

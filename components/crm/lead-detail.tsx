@@ -346,6 +346,17 @@ export function LeadDetail({
       return;
     }
 
+    const paymentModel = lead.payment_model || "full";
+    const receivedAmount =
+      paymentModel === "full"
+        ? currentValue
+        : Number(lead.amount_received || 0);
+
+    if (receivedAmount < 0 || receivedAmount > currentValue) {
+      alert("O valor recebido deve estar entre 0 e o valor total do negócio.");
+      return;
+    }
+
     setIsMarkingWon(true);
 
     try {
@@ -361,6 +372,8 @@ export function LeadDetail({
         .from("leads")
         .update({
           column_id: wonColumnId,
+          payment_model: paymentModel,
+          amount_received: receivedAmount,
           updated_at: new Date().toISOString(),
         })
         .eq("id", lead.id);
@@ -556,6 +569,95 @@ export function LeadDetail({
             <p className="text-xs text-muted-foreground">
               Este valor será somado ao valor potencial enquanto o lead estiver em aberto, 
               e ao valor realizado quando for fechado ganho.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+              <div className="space-y-2">
+                <Label>Forma de Pagamento</Label>
+                <Select
+                  value={lead.payment_model || "full"}
+                  onValueChange={async (value) => {
+                    const nextModel = value as "full" | "installments" | "entry_plus_installments";
+                    const updates: Record<string, unknown> = {
+                      payment_model: nextModel,
+                    };
+                    if (nextModel === "full") {
+                      updates.amount_received = Number(lead.deal_value || 0);
+                      updates.installments_count = null;
+                    }
+                    if (nextModel === "installments" && !lead.installments_count) {
+                      updates.installments_count = 2;
+                    }
+                    if (nextModel === "entry_plus_installments" && !lead.installments_count) {
+                      updates.installments_count = 2;
+                    }
+                    await supabase.from("leads").update(updates).eq("id", lead.id);
+                    onUpdate();
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Integral</SelectItem>
+                    <SelectItem value="installments">Parcelado</SelectItem>
+                    <SelectItem value="entry_plus_installments">Entrada + Parcelado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Valor Recebido em Caixa (USD)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max={lead.deal_value || 0}
+                  value={
+                    lead.payment_model === "full"
+                      ? Number(lead.deal_value || 0)
+                      : Number(lead.amount_received || 0)
+                  }
+                  disabled={(lead.payment_model || "full") === "full"}
+                  onChange={async (e) => {
+                    const raw = parseFloat(e.target.value);
+                    const total = Number(lead.deal_value || 0);
+                    const value = Number.isFinite(raw) ? Math.min(Math.max(raw, 0), total) : 0;
+                    await supabase
+                      .from("leads")
+                      .update({ amount_received: value })
+                      .eq("id", lead.id);
+                    onUpdate();
+                  }}
+                  placeholder="0.00"
+                />
+              </div>
+
+              {(lead.payment_model === "installments" || lead.payment_model === "entry_plus_installments") && (
+                <div className="space-y-2">
+                  <Label>Quantidade de Parcelas</Label>
+                  <Input
+                    type="number"
+                    min="2"
+                    step="1"
+                    value={lead.installments_count || 2}
+                    onChange={async (e) => {
+                      const raw = parseInt(e.target.value, 10);
+                      const value = Number.isFinite(raw) ? Math.max(raw, 2) : 2;
+                      await supabase
+                        .from("leads")
+                        .update({ installments_count: value })
+                        .eq("id", lead.id);
+                      onUpdate();
+                    }}
+                    placeholder="2"
+                  />
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Em relatórios: caixa = valor recebido; provisionado = valor total - recebido.
             </p>
             
             {/* Ações Rápidas */}

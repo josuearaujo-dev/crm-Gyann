@@ -61,6 +61,9 @@ export interface Lead {
   assigned_to: string | null
   position: number
   deal_value: number
+  payment_model: 'full' | 'installments' | 'entry_plus_installments' | null
+  amount_received: number | null
+  installments_count: number | null
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
