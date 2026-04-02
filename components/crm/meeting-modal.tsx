@@ -44,6 +44,7 @@ export function MeetingModal({
   const [time, setTime] = useState("");
   const [duration, setDuration] = useState("60");
   const [meetingType, setMeetingType] = useState<string>("");
+  const [meetingStatus, setMeetingStatus] = useState<"scheduled" | "done" | "no_show">("scheduled");
   const [meetingLink, setMeetingLink] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
@@ -114,7 +115,7 @@ export function MeetingModal({
       duration_minutes: duration ? parseInt(duration) : 60,
       meeting_type: meetingType || null,
       meeting_link: meetingLink || null,
-      status: "scheduled",
+      status: meetingStatus,
       notes: notes || null,
     };
 
@@ -180,6 +181,7 @@ export function MeetingModal({
     setTime("");
     setDuration("60");
     setMeetingType("");
+    setMeetingStatus("scheduled");
     setMeetingLink("");
     setNotes("");
     setReminders([{ minutes_before: 1440, channels: ["email"] }]);
@@ -298,6 +300,20 @@ export function MeetingModal({
                     Outro
                   </div>
                 </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="meeting-status">Status inicial</Label>
+            <Select value={meetingStatus} onValueChange={(v) => setMeetingStatus(v as "scheduled" | "done" | "no_show")}>
+              <SelectTrigger id="meeting-status">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="scheduled">Agendada</SelectItem>
+                <SelectItem value="done">Realizada</SelectItem>
+                <SelectItem value="no_show">No-show</SelectItem>
               </SelectContent>
             </Select>
           </div>

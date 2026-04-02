@@ -141,6 +141,13 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
     }
   };
 
+  const handleMarkDone = async (meetingId: string) => {
+    const { error } = await supabase.from("meetings").update({ status: "done" }).eq("id", meetingId);
+    if (!error) {
+      setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, status: "done" as const } : m)));
+    }
+  };
+
   const days = getDaysInMonth(currentMonth);
   const today = new Date();
 
@@ -354,9 +361,24 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
                             )}
 
                             {meeting.status === "scheduled" && (
-                              <Button variant="outline" size="sm" className="mt-3 w-full" onClick={() => handleMarkNoShow(meeting.id)}>
-                                Marcar No Show
-                              </Button>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  className="w-full"
+                                  onClick={() => handleMarkDone(meeting.id)}
+                                >
+                                  Marcar como Realizada
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-full"
+                                  onClick={() => handleMarkNoShow(meeting.id)}
+                                >
+                                  Marcar No Show
+                                </Button>
+                              </div>
                             )}
                           </div>
                         )}

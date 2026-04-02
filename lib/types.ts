@@ -78,6 +78,18 @@ export interface Lead {
   tasks?: Task[]
 }
 
+/** Parcelas cadastradas no lead (vencimento + pagamento) — usado em relatórios por período. */
+export interface LeadInstallment {
+  id: string
+  lead_id: string
+  sort_order: number
+  amount: number
+  due_date: string
+  paid_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface LeadNote {
   id: string
   lead_id: string

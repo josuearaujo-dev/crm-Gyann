@@ -137,7 +137,7 @@ export function CalendarView({ initialTasks, initialMeetings, userId }: Calendar
       scheduled_at: task.scheduled_at ? new Date(task.scheduled_at).toISOString().slice(0, 16) : "",
       start_time: task.start_time || "",
       end_time: task.end_time || "",
-      type: task.type || "task",
+      type: task.type === "callback" ? "callback" : "manual",
       note: task.note || "",
     });
   };
@@ -151,10 +151,13 @@ export function CalendarView({ initialTasks, initialMeetings, userId }: Calendar
     if (!editingTaskId || !editForm) return;
     setSavingEdit(true);
 
+    const taskType =
+      editForm.type === "callback" ? "callback" : "manual";
+
     const updateData: Record<string, unknown> = {
       title: editForm.title,
       description: editForm.description || null,
-      type: editForm.type,
+      type: taskType,
       start_time: editForm.start_time || null,
       end_time: editForm.end_time || null,
       note: editForm.note || null,
@@ -366,8 +369,8 @@ export function CalendarView({ initialTasks, initialMeetings, userId }: Calendar
                                       onChange={(e) => setEditForm({ ...editForm, type: e.target.value })}
                                       className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                                     >
-                                      <option value="task">Task</option>
-                                      <option value="callback">Callback</option>
+                                      <option value="manual">Tarefa</option>
+                                      <option value="callback">Callback (ligar)</option>
                                     </select>
                                   </div>
                                   <div className="space-y-1">

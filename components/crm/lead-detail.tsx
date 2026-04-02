@@ -57,7 +57,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import type { Lead, Tag, PipelineColumn, Task, LeadNote, USState, Nationality } from "@/lib/types";
+import type { Lead, Tag, PipelineColumn, Task, LeadNote, USState, Nationality, LeadInstallment } from "@/lib/types";
 import { getWonPipelineColumn } from "@/lib/pipeline-utils";
 import { CallbackModal } from "@/components/crm/callback-modal";
 import { MeetingModal } from "@/components/crm/meeting-modal";
@@ -115,13 +115,144 @@ export function LeadDetail({
   const [isMarkingWon, setIsMarkingWon] = useState(false);
   const [showLostDialog, setShowLostDialog] = useState(false);
   const [showFinishedDialog, setShowFinishedDialog] = useState(false);
+  const [installments, setInstallments] = useState<LeadInstallment[]>([]);
+  const [firstDueForGen, setFirstDueForGen] = useState(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  const [generatingInstallments, setGeneratingInstallments] = useState(false);
+
+  const loadInstallments = async () => {
+    const { data, error } = await supabase
+      .from("lead_installments")
+      .select("*")
+      .eq("lead_id", lead.id)
+      .order("sort_order", { ascending: true })
+      .order("due_date", { ascending: true });
+    if (!error && data) {
+      setInstallments(data as LeadInstallment[]);
+    }
+  };
 
   useEffect(() => {
     loadNotes();
     loadTasks();
     loadStates();
     loadNationalities();
+    loadInstallments();
   }, [lead.id]);
+
+  const syncAmountReceivedFromInstallments = async (rows: LeadInstallment[]) => {
+    const paid = rows.filter((r) => r.paid_at).reduce((s, r) => s + Number(r.amount), 0);
+    const cap = Number(lead.deal_value || 0);
+    await supabase
+      .from("leads")
+      .update({ amount_received: Math.min(paid, cap) })
+      .eq("id", lead.id);
+  };
+
+  const handleGenerateInstallments = async () => {
+    const n = Math.max(2, lead.installments_count || 2);
+    const totalCents = Math.round(Number(lead.deal_value || 0) * 100);
+    if (totalCents <= 0) return;
+    const base = Math.floor(totalCents / n);
+    const amounts: number[] = [];
+    let acc = 0;
+    for (let i = 0; i < n - 1; i++) {
+      amounts.push(base / 100);
+      acc += base;
+    }
+    amounts.push((totalCents - acc) / 100);
+
+    const start = new Date(firstDueForGen + "T12:00:00");
+    const rows = amounts.map((amount, i) => {
+      const d = new Date(start);
+      d.setMonth(d.getMonth() + i);
+      return {
+        lead_id: lead.id,
+        sort_order: i,
+        amount,
+        due_date: d.toISOString().slice(0, 10),
+        paid_at: null as string | null,
+      };
+    });
+
+    setGeneratingInstallments(true);
+    const { error: delErr } = await supabase.from("lead_installments").delete().eq("lead_id", lead.id);
+    if (delErr) {
+      console.error(delErr);
+      alert("Não foi possível limpar parcelas antigas. Rode o script SQL 025 no banco se a tabela não existir.");
+      setGeneratingInstallments(false);
+      return;
+    }
+    const { error: insErr } = await supabase.from("lead_installments").insert(rows);
+    setGeneratingInstallments(false);
+    if (insErr) {
+      console.error(insErr);
+      alert("Erro ao gerar parcelas. Confirme a migração lead_installments (scripts/025).");
+      return;
+    }
+    await loadInstallments();
+    await syncAmountReceivedFromInstallments([]);
+    onUpdate();
+  };
+
+  const handleToggleInstallmentPaid = async (row: LeadInstallment, paid: boolean) => {
+    const paid_at = paid ? new Date().toISOString() : null;
+    const { error } = await supabase
+      .from("lead_installments")
+      .update({ paid_at })
+      .eq("id", row.id);
+    if (error) return;
+    const next = installments.map((r) => (r.id === row.id ? { ...r, paid_at } : r));
+    setInstallments(next);
+    await syncAmountReceivedFromInstallments(next);
+    onUpdate();
+  };
+
+  const handleInstallmentFieldBlur = async (row: LeadInstallment, patch: Partial<LeadInstallment>) => {
+    const amount = patch.amount != null ? Number(patch.amount) : Number(row.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const due_date = patch.due_date ?? row.due_date;
+    const { error } = await supabase
+      .from("lead_installments")
+      .update({ amount, due_date })
+      .eq("id", row.id);
+    if (!error) {
+      await loadInstallments();
+      onUpdate();
+    }
+  };
+
+  const handleDeleteInstallment = async (id: string) => {
+    const { error } = await supabase.from("lead_installments").delete().eq("id", id);
+    if (!error) {
+      const next = installments.filter((r) => r.id !== id);
+      setInstallments(next);
+      await syncAmountReceivedFromInstallments(next);
+      onUpdate();
+    }
+  };
+
+  const handleAddInstallment = async () => {
+    const maxOrder = installments.reduce((m, r) => Math.max(m, r.sort_order), -1);
+    const lastDue =
+      installments.length > 0
+        ? installments[installments.length - 1].due_date
+        : firstDueForGen;
+    const d = new Date(lastDue + "T12:00:00");
+    d.setMonth(d.getMonth() + 1);
+    const { error } = await supabase.from("lead_installments").insert({
+      lead_id: lead.id,
+      sort_order: maxOrder + 1,
+      amount: 0.01,
+      due_date: d.toISOString().slice(0, 10),
+      paid_at: null,
+    });
+    if (!error) {
+      await loadInstallments();
+      onUpdate();
+    }
+  };
 
   const loadStates = async () => {
     const { data } = await supabase
@@ -257,6 +388,8 @@ export function LeadDetail({
       .insert({
         lead_id: lead.id,
         title: newTaskTitle,
+        type: "manual",
+        status: "pending",
         due_date: newTaskDueDate || null,
         start_time: newTaskStartTime || null,
         end_time: endTime || null,
@@ -657,8 +790,101 @@ export function LeadDetail({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Em relatórios: caixa = valor recebido; provisionado = valor total - recebido.
+              Coorte: total já recebido e saldo a receber. Com parcelas cadastradas, o relatório também mostra caixa /
+              previsto / em aberto na janela da campanha.
             </p>
+
+            {(lead.payment_model === "installments" ||
+              lead.payment_model === "entry_plus_installments") &&
+              Number(lead.deal_value || 0) > 0 && (
+                <div className="rounded-lg border border-border p-4 space-y-3 mt-3">
+                  <p className="text-sm font-medium">Parcelas (vencimento e pagamento)</p>
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-3 flex-wrap">
+                    <div className="space-y-1 flex-1 min-w-[140px]">
+                      <Label className="text-xs">Primeiro vencimento</Label>
+                      <Input
+                        type="date"
+                        value={firstDueForGen}
+                        onChange={(e) => setFirstDueForGen(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={generatingInstallments}
+                      onClick={() => {
+                        if (
+                          installments.length > 0 &&
+                          !confirm("Substituir todas as parcelas por uma nova grade igual?")
+                        ) {
+                          return;
+                        }
+                        void handleGenerateInstallments();
+                      }}
+                    >
+                      {generatingInstallments ? "Gerando..." : "Gerar parcelas iguais"}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void handleAddInstallment()}>
+                      <Plus className="w-4 h-4 mr-1" />
+                      Adicionar
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Relatório: data de pagamento → recebido no período; vencimento → previsto / em aberto na janela.
+                  </p>
+                  {installments.length > 0 && (
+                    <div className="space-y-2">
+                      {installments.map((row) => (
+                        <div
+                          key={`${row.id}-${row.amount}-${row.due_date}-${row.paid_at ?? ""}`}
+                          className="flex flex-wrap items-center gap-2 p-2 rounded-md bg-muted/50"
+                        >
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            className="w-28 h-8"
+                            defaultValue={row.amount}
+                            onBlur={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (Number.isFinite(v) && v > 0) {
+                                void handleInstallmentFieldBlur(row, { amount: v });
+                              }
+                            }}
+                          />
+                          <Input
+                            type="date"
+                            className="w-36 h-8"
+                            defaultValue={row.due_date}
+                            onBlur={(e) => {
+                              if (e.target.value) {
+                                void handleInstallmentFieldBlur(row, { due_date: e.target.value });
+                              }
+                            }}
+                          />
+                          <label className="flex items-center gap-2 text-xs cursor-pointer shrink-0">
+                            <Checkbox
+                              checked={Boolean(row.paid_at)}
+                              onCheckedChange={(c) => void handleToggleInstallmentPaid(row, c === true)}
+                            />
+                            Pago
+                          </label>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => void handleDeleteInstallment(row.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             
             {/* Ações Rápidas */}
                   <div className="space-y-2 mt-2">

@@ -42,6 +42,11 @@ export default async function ReportsPage() {
     .select("*")
     .order("start_date", { ascending: false });
 
+  const { data: installments } = await supabase
+    .from("lead_installments")
+    .select("*")
+    .order("sort_order", { ascending: true });
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -56,6 +61,7 @@ export default async function ReportsPage() {
         columns={columns || []}
         sources={sources || []}
         meetings={meetings || []}
+        installments={installments || []}
         initialCampaigns={campaigns || []}
         userId={user.id}
       />
