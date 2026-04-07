@@ -15,6 +15,7 @@ export default async function PipelinePage() {
   const { data: leads } = await supabase
     .from("leads")
     .select("*, lead_sources(name, type), lead_tags(tags(*)), us_states(name, abbreviation), nationalities(country, nationality)")
+    .neq("is_lost", true)
     .order("created_at", { ascending: false });
 
   const { data: tags } = await supabase

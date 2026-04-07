@@ -3,11 +3,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
 import {
   Users,
   CheckCircle2,
@@ -20,6 +29,8 @@ import {
   AlertCircle,
 } from "lucide-react";
 import type { Lead, Task, Profile, Meeting } from "@/lib/types";
+import type { Campaign } from "./campaign-manager";
+import { getWonPipelineColumn } from "@/lib/pipeline-utils";
 import BorderBeam from "@/components/ui/border-beam"; // Import BorderBeam
 import NumberTicker from "@/components/ui/number-ticker"; // Import NumberTicker
 import { TaskDetail } from "./task-detail";
@@ -32,7 +43,9 @@ interface HomeContentProps {
     lead_sources: { name: string } | null;
     pipeline_columns: { name: string } | null;
   })[];
-  leadStats: { id: string; created_at: string }[];
+  leadStats: { id: string; created_at: string; deal_value: number; column_id: string | null }[];
+  pipelineColumns: { id: string; name: string }[];
+  campaigns: Campaign[];
   taskStats: { id: string; completed: boolean }[];
   potentialValue: number;
   realizedValue: number;
@@ -44,6 +57,8 @@ export function HomeContent({
   todayMeetings: initialTodayMeetings,
   recentLeads,
   leadStats,
+  pipelineColumns,
+  campaigns,
   taskStats: initialTaskStats,
   potentialValue,
   realizedValue,
@@ -54,6 +69,17 @@ export function HomeContent({
   const [todayMeetings, setTodayMeetings] = useState(initialTodayMeetings);
   const [taskStats, setTaskStats] = useState(initialTaskStats);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [filterMode, setFilterMode] = useState<"month" | "range" | "campaign">("month");
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
+  const [rangeStart, setRangeStart] = useState<string>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+  });
+  const [rangeEnd, setRangeEnd] = useState<string>(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+  });
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>(campaigns[0]?.id || "none");
 
   // Atualizar status overdue periodicamente (apenas atualiza o estado, sem refresh)
   useEffect(() => {
@@ -83,15 +109,57 @@ export function HomeContent({
     };
   }, []); // Sem dependências para evitar re-runs
 
-  const totalLeads = leadStats.length;
-  const thisMonthLeads = leadStats.filter((l) => {
-    const date = new Date(l.created_at);
-    const now = new Date();
-    return (
-      date.getMonth() === now.getMonth() &&
-      date.getFullYear() === now.getFullYear()
-    );
-  }).length;
+  const selectedCampaign = useMemo(
+    () => campaigns.find((c) => c.id === selectedCampaignId) || null,
+    [campaigns, selectedCampaignId]
+  );
+  const wonColumnId = useMemo(() => getWonPipelineColumn(pipelineColumns as any)?.id || null, [pipelineColumns]);
+  const periodWindow = useMemo(() => {
+    if (filterMode === "campaign") {
+      if (!selectedCampaign) return null;
+      return { start: selectedCampaign.start_date, end: selectedCampaign.end_date, label: `Campanha: ${selectedCampaign.name}` };
+    }
+    if (filterMode === "month") {
+      const [year, month] = selectedMonth.split("-").map(Number);
+      const start = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+      const end = new Date(year, month, 0).toISOString().slice(0, 10);
+      return { start, end, label: `${selectedMonth}` };
+    }
+    if (!rangeStart || !rangeEnd) return null;
+    return { start: rangeStart, end: rangeEnd, label: `${rangeStart} -> ${rangeEnd}` };
+  }, [filterMode, selectedCampaign, selectedMonth, rangeStart, rangeEnd]);
+
+  const filteredLeadStats = useMemo(() => {
+    if (filterMode === "campaign" && !selectedCampaign) return [];
+    if (!periodWindow) return leadStats;
+    return leadStats.filter((l) => {
+      const d = l.created_at.slice(0, 10);
+      return d >= periodWindow.start && d <= periodWindow.end;
+    });
+  }, [filterMode, selectedCampaign, leadStats, periodWindow]);
+
+  const filteredRecentLeads = useMemo(() => {
+    if (filterMode === "campaign" && !selectedCampaign) return [];
+    const base = periodWindow
+      ? recentLeads.filter((l) => {
+          const d = l.created_at.slice(0, 10);
+          return d >= periodWindow.start && d <= periodWindow.end;
+        })
+      : recentLeads;
+    return base.slice(0, 5);
+  }, [filterMode, selectedCampaign, recentLeads, periodWindow]);
+
+  const totalLeads = filteredLeadStats.length;
+  const computedRealizedValue = wonColumnId
+    ? filteredLeadStats
+        .filter((l) => l.column_id === wonColumnId)
+        .reduce((sum, l) => sum + Number(l.deal_value || 0), 0)
+    : realizedValue;
+  const computedPotentialValue = wonColumnId
+    ? filteredLeadStats
+        .filter((l) => l.column_id !== wonColumnId)
+        .reduce((sum, l) => sum + Number(l.deal_value || 0), 0)
+    : potentialValue;
 
   const completedTasks = taskStats.filter((t) => t.completed).length;
   const pendingTasks = taskStats.filter((t) => !t.completed).length;
@@ -189,6 +257,74 @@ export function HomeContent({
         </div>
       </div>
 
+      <Card className="border-border/50 bg-card/80 backdrop-blur-sm">
+        <CardContent className="pt-6 space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 sm:items-end">
+            <div className="w-full sm:w-60 space-y-2">
+              <Label>Filtro da Home</Label>
+              <Select value={filterMode} onValueChange={(v) => setFilterMode(v as "month" | "range" | "campaign")}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="month">Mensal</SelectItem>
+                  <SelectItem value="range">Período</SelectItem>
+                  <SelectItem value="campaign">Campanha</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {filterMode === "month" && (
+              <div className="w-full sm:w-56 space-y-2">
+                <Label>Mês</Label>
+                <Input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
+              </div>
+            )}
+
+            {filterMode === "range" && (
+              <>
+                <div className="w-full sm:w-48 space-y-2">
+                  <Label>Início</Label>
+                  <Input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)} />
+                </div>
+                <div className="w-full sm:w-48 space-y-2">
+                  <Label>Fim</Label>
+                  <Input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {filterMode === "campaign" && (
+              <div className="w-full sm:w-80 space-y-2">
+                <Label>Campanha</Label>
+                <Select value={selectedCampaignId} onValueChange={setSelectedCampaignId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma campanha" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {campaigns.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhuma campanha cadastrada
+                      </SelectItem>
+                    ) : (
+                      campaigns.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Base usada nos cards: leads criados no período selecionado ({periodWindow?.label || "sem filtro"}).
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 stagger-children">
         <Card className="group hover-lift border-border/50 bg-card/80 backdrop-blur-sm overflow-hidden relative h-full">
@@ -200,7 +336,7 @@ export function HomeContent({
                 <p className="text-sm text-muted-foreground font-medium">Valor Potencial</p>
                 <div className="text-4xl font-bold text-foreground mt-2 tracking-tight flex items-baseline gap-1">
                   <span className="text-2xl">$</span>
-                  <NumberTicker value={potentialValue || 0} decimalPlaces={2} />
+                  <NumberTicker value={computedPotentialValue || 0} decimalPlaces={2} stiffness={240} damping={26} />
                 </div>
                 <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                   <TrendingUp className="w-3 h-3 text-success" />
@@ -223,7 +359,7 @@ export function HomeContent({
                 <p className="text-sm text-muted-foreground font-medium">Valor Realizado</p>
                 <div className="text-4xl font-bold text-foreground mt-2 tracking-tight flex items-baseline gap-1">
                   <span className="text-2xl">$</span>
-                  <NumberTicker value={realizedValue || 0} decimalPlaces={2} />
+                  <NumberTicker value={computedRealizedValue || 0} decimalPlaces={2} stiffness={240} damping={26} />
                 </div>
                 <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground">
                   <CheckCircle2 className="w-3 h-3 text-chart-2" />
@@ -245,11 +381,11 @@ export function HomeContent({
               <div>
                 <p className="text-sm text-muted-foreground font-medium">Total de leads</p>
                 <div className="text-4xl font-bold text-foreground mt-2 tracking-tight">
-                  <NumberTicker value={totalLeads} />
+                  <NumberTicker value={totalLeads} stiffness={240} damping={26} />
                 </div>
                 <div className="flex items-center gap-1 mt-2 text-xs">
-                  <NumberTicker value={thisMonthLeads} className="text-muted-foreground text-xs" />
-                  <span className="text-muted-foreground">este mes</span>
+                  <NumberTicker value={totalLeads} className="text-muted-foreground text-xs" stiffness={240} damping={26} />
+                  <span className="text-muted-foreground">no filtro</span>
                 </div>
               </div>
               <div className="w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
@@ -294,10 +430,9 @@ export function HomeContent({
             ) : (
               <div className="space-y-2">
                 {todayTasks.map((task, index) => {
-                  const isOverdue = !task.completed && (
-                    ((task as any).scheduled_at && new Date((task as any).scheduled_at) < new Date()) ||
-                    (task.due_date && new Date(task.due_date) < new Date())
-                  );
+                  const isOverdue =
+                    !task.completed &&
+                    isOverdueNextDayInAppTimezone((task as any).scheduled_at || task.due_date);
                   
                   return (
                   <div
@@ -486,14 +621,14 @@ export function HomeContent({
               <div>
                 <span className="text-lg font-semibold">Leads Recentes</span>
                 <p className="text-xs text-muted-foreground font-normal mt-0.5">
-                  Ultimos {recentLeads.length} cadastrados
+                    {periodWindow ? `Ultimos ${filteredRecentLeads.length} no filtro` : `Ultimos ${filteredRecentLeads.length} cadastrados`}
                 </p>
               </div>
             </div>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {recentLeads.length === 0 ? (
+          {filteredRecentLeads.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-8 text-center">
               <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4">
                 <Users className="w-8 h-8 text-muted-foreground" />
@@ -507,7 +642,7 @@ export function HomeContent({
             </div>
           ) : (
             <div className="space-y-2">
-              {recentLeads.map((lead, index) => (
+              {filteredRecentLeads.map((lead, index) => (
                 <div
                   key={lead.id}
                   className="flex items-center gap-3 p-4 rounded-xl bg-muted/50 hover:bg-muted border border-transparent hover:border-border/50 transition-all duration-200 cursor-pointer group"
@@ -516,7 +651,7 @@ export function HomeContent({
                   }
                   style={{ animationDelay: `${index * 50}ms` }}
                 >
-                  <div className="w-11 h-11 bg-gradient-to-br from-primary/20 to-primary/5 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:scale-105 transition-transform duration-200">
+                  <div className="w-11 h-11 bg-linear-to-br from-primary/20 to-primary/5 rounded-xl flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
                     <span className="text-sm font-bold text-primary">
                       {lead.name.charAt(0).toUpperCase()}
                     </span>

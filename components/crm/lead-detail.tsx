@@ -63,7 +63,7 @@ import { CallbackModal } from "@/components/crm/callback-modal";
 import { MeetingModal } from "@/components/crm/meeting-modal";
 import { MarkLostDialog } from "@/components/crm/mark-lost-dialog";
 import { MarkFinishedDialog } from "@/components/crm/mark-finished-dialog";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
 
 interface LeadDetailProps {
   lead: Lead & {
@@ -1359,7 +1359,7 @@ export function LeadDetail({
                             Callback
                           </Badge>
                         )}
-                        {task.status === 'overdue' && !task.completed && (
+                        {!task.completed && isOverdueNextDayInAppTimezone(task.scheduled_at || task.due_date) && (
                           <Badge variant="destructive" className="text-xs">
                             Atrasada
                           </Badge>

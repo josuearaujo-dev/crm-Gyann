@@ -37,7 +37,7 @@ import {
   Check,
 } from "lucide-react";
 import type { Task, Lead, Tag } from "@/lib/types";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 
 interface TaskDetailProps {
@@ -71,6 +71,9 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
     type: string;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [leadNotes, setLeadNotes] = useState<
+    { id: string; content: string; created_at: string }[]
+  >([]);
 
   useEffect(() => {
     if (open && taskId) {
@@ -111,6 +114,16 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
         if (leadData) {
           setLead(leadData as any);
         }
+
+        const { data: notesData } = await supabase
+          .from("lead_notes")
+          .select("id, content, created_at")
+          .eq("lead_id", taskData.lead_id)
+          .order("created_at", { ascending: false })
+          .limit(8);
+        setLeadNotes(notesData || []);
+      } else {
+        setLeadNotes([]);
       }
     }
     
@@ -121,8 +134,7 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
 
   const isOverdue =
     !task.completed &&
-    ((task.scheduled_at && new Date(task.scheduled_at) < new Date()) ||
-      (task.due_date && new Date(task.due_date) < new Date()));
+    isOverdueNextDayInAppTimezone(task.scheduled_at || task.due_date);
 
   const handleToggleComplete = async () => {
     if (!task) return;
@@ -398,7 +410,7 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
                   <div className="space-y-3 pt-2">
                     {task.scheduled_at && (
                       <div className="flex items-center gap-3">
-                        <Calendar className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="flex-1">
                           <p className="text-sm font-medium">Data agendada</p>
                           <p className="text-xs text-muted-foreground">
@@ -413,7 +425,7 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
 
                     {task.due_date && (
                       <div className="flex items-center gap-3">
-                        <Clock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="flex-1">
                           <p className="text-sm font-medium">Data limite</p>
                           <p className="text-xs text-muted-foreground">
@@ -427,7 +439,7 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
 
                     {task.start_time && (
                       <div className="flex items-center gap-3">
-                        <Clock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <Clock className="w-4 h-4 text-muted-foreground shrink-0" />
                         <div className="flex-1">
                           <p className="text-sm font-medium">Horário</p>
                           <p className="text-xs text-muted-foreground">
@@ -475,10 +487,21 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
                   <User className="w-4 h-4" />
                   Informações do Lead
                 </Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    onOpenChange(false);
+                    router.push(`/dashboard/pipeline?lead=${lead.id}`);
+                  }}
+                >
+                  Ver todas as notas e histórico do lead
+                </Button>
 
                 {/* Nome e Empresa */}
                 <div className="flex items-start gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-primary/20 to-primary/5 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <div className="w-10 h-10 bg-linear-to-br from-primary/20 to-primary/5 rounded-lg flex items-center justify-center shrink-0">
                       <span className="text-sm font-bold text-primary">
                         {lead.name.charAt(0).toUpperCase()}
                       </span>
@@ -538,19 +561,19 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
                 <div className="space-y-3 pt-4">
                     {lead.email && (
                       <div className="flex items-center gap-3 text-sm">
-                        <Mail className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <Mail className="w-4 h-4 text-muted-foreground shrink-0" />
                         <span className="truncate text-foreground font-medium">{lead.email}</span>
                       </div>
                     )}
                     {lead.phone && (
                       <div className="flex items-center gap-3 text-sm">
-                        <Phone className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <Phone className="w-4 h-4 text-muted-foreground shrink-0" />
                         <span className="text-foreground font-medium">{lead.phone}</span>
                       </div>
                     )}
                     {lead.whatsapp && lead.whatsapp !== lead.phone && (
                       <div className="flex items-center gap-3 text-sm">
-                        <MessageSquare className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <MessageSquare className="w-4 h-4 text-muted-foreground shrink-0" />
                         <span className="text-foreground font-medium">{lead.whatsapp}</span>
                       </div>
                     )}
@@ -561,13 +584,13 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
                   <div className="space-y-2.5 pt-4 border-t">
                       {lead.nationalities && (
                         <div className="flex items-center gap-3 text-sm">
-                          <Globe className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          <Globe className="w-4 h-4 text-muted-foreground shrink-0" />
                           <span className="text-foreground font-medium">{lead.nationalities.country}</span>
                         </div>
                       )}
                       {(lead.us_states || lead.city) && (
                         <div className="flex items-center gap-3 text-sm">
-                          <MapPin className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                          <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
                           <span className="text-foreground font-medium">
                             {lead.city && `${lead.city}`}
                             {lead.city && lead.us_states && ", "}
@@ -621,6 +644,30 @@ export function TaskDetail({ taskId, open, onOpenChange, onUpdate }: TaskDetailP
                     </p>
                   </div>
                 )}
+
+                {/* Notas do Lead */}
+                <div className="pt-4 border-t space-y-2">
+                  <Label className="text-sm font-medium text-foreground">Notas do Lead</Label>
+                  {leadNotes.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Nenhuma nota cadastrada para este lead.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {leadNotes.map((ln) => (
+                        <div key={ln.id} className="rounded-md bg-muted/40 p-2.5">
+                          <p className="text-xs text-foreground whitespace-pre-wrap">{ln.content}</p>
+                          <p className="text-[11px] text-muted-foreground mt-1">
+                            {formatInAppTimezone(ln.created_at, {
+                              dateStyle: "short",
+                              timeStyle: "short",
+                            })}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           ) : (

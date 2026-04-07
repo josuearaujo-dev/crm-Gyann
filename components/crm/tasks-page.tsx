@@ -17,7 +17,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Clock, Search, Filter, AlertCircle } from "lucide-react";
 import type { Task } from "@/lib/types";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
 import { cn } from "@/lib/utils";
 import { TaskDetail } from "./task-detail";
 
@@ -37,10 +37,7 @@ export function TasksPage({ initialTasks, userId }: TasksPageProps) {
 
   const isTaskOverdue = (task: Task) => {
     if (task.completed) return false;
-    const now = new Date();
-    if (task.scheduled_at && new Date(task.scheduled_at) < now) return true;
-    if (task.due_date && new Date(task.due_date) < now) return true;
-    return false;
+    return isOverdueNextDayInAppTimezone(task.scheduled_at || task.due_date);
   };
 
   const filteredTasks = tasks.filter((task) => {

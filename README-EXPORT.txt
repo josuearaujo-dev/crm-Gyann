@@ -1,9 +1,11 @@
-# Export manual Git — 20260402-175920
+# Export manual Git — 20260407-232932
 # Raiz do projeto: /Users/leandra/Downloads/crm-with-meta-api
 
 OK  .gitignore
 OK  .npmrc
+OK  app/api/tasks/update-overdue/route.ts
 OK  app/dashboard/page.tsx
+OK  app/dashboard/pipeline/page.tsx
 OK  app/dashboard/reports/page.tsx
 OK  components/crm/calendar-view.tsx
 OK  components/crm/campaign-manager.tsx
@@ -14,8 +16,14 @@ OK  components/crm/meeting-modal.tsx
 OK  components/crm/meetings-calendar-view.tsx
 OK  components/crm/pipeline-board.tsx
 OK  components/crm/reports-dashboard.tsx
+OK  components/crm/task-detail.tsx
+OK  components/crm/tasks-page.tsx
+OK  components/crm/timeline-view.tsx
+OK  components/ui/input.tsx
+OK  components/ui/number-ticker.tsx
 OK  lib/pipeline-utils.ts
 OK  lib/report-finance.ts
+OK  lib/timezone.ts
 OK  lib/types.ts
 OK  package.json
 OK  pnpm-lock.yaml

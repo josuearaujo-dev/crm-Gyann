@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +23,7 @@ import {
 import { Calendar, Clock, MapPin, Video, Phone, Users, Globe, Bell, Plus, X } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { createClient } from "@/lib/supabase/client";
-import { toDateStringInAppTimezone } from "@/lib/timezone";
+import { toDateStringInAppTimezone, wallTimeInAppTimezoneToUtc } from "@/lib/timezone";
 
 interface MeetingModalProps {
   leadId: string;
@@ -52,41 +52,41 @@ export function MeetingModal({
     { minutes_before: number; channels: string[] }[]
   >([{ minutes_before: 1440, channels: ["email"] }]); // 24h antes por padrão
 
+  const dateInputRef = useRef<HTMLInputElement>(null);
+  const timeInputRef = useRef<HTMLInputElement>(null);
+
   const supabase = createClient();
 
   const handleSave = async () => {
-    if (!date || !time) {
+    // Alguns navegadores (Safari/iOS) não disparam onChange a tempo; o estado pode ficar vazio
+    // mesmo com o campo visível preenchido. Usar valor do DOM como fallback.
+    const dateVal = (date || dateInputRef.current?.value || "").trim();
+    const timeVal = (time || timeInputRef.current?.value || "").trim();
+    if (!dateVal || !timeVal) {
       alert("Por favor, preencha data e horário");
       return;
     }
+    if (dateVal !== date) setDate(dateVal);
+    if (timeVal !== time) setTime(timeVal);
 
     setLoading(true);
 
-    // Combinar data e hora em um timestamp (Pacific Time)
-    // Parse como se fosse Pacific Time e converter para UTC
-    const localDate = new Date(`${date}T${time}:00`);
-    
-    // Detectar se estamos em PST ou PDT
-    const isPST = new Date().toLocaleString('en-US', { timeZone: 'America/Los_Angeles', timeZoneName: 'short' }).includes('PST');
-    const pacificOffset = isPST ? 8 : 7; // UTC está 7-8 horas AHEAD de Pacific
-    
-    // Adicionar o offset para converter para UTC
-    const scheduledAtUTC = new Date(Date.UTC(
-      localDate.getFullYear(),
-      localDate.getMonth(),
-      localDate.getDate(),
-      localDate.getHours() + pacificOffset, // ADICIONAR para converter PT -> UTC
-      localDate.getMinutes(),
-      0
-    ));
+    let scheduledAtUTC: Date;
+    try {
+      // Sempre interpreta data+hora como horário civil em America/Los_Angeles (SF),
+      // independente do fuso do navegador ou do formato regional de exibição (o input date é ISO).
+      scheduledAtUTC = wallTimeInAppTimezoneToUtc(dateVal, timeVal);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Data ou horário inválido");
+      setLoading(false);
+      return;
+    }
 
-    console.log("[v0] Criando reunião (Pacific Time):", { 
-      date, 
-      time,
-      pacificOffset,
-      inputLocal: `${date}T${time}:00`,
+    console.log("[v0] Criando reunião (Pacific Time → UTC):", {
+      date: dateVal,
+      time: timeVal,
       scheduledAtUTC: scheduledAtUTC.toISOString(),
-      leadId 
+      leadId,
     });
 
     // Pegar o usuário atual
@@ -227,10 +227,12 @@ export function MeetingModal({
                 Data <span className="text-destructive">*</span>
               </Label>
               <Input
+                ref={dateInputRef}
                 id="meeting-date"
                 type="date"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                onInput={(e) => setDate(e.currentTarget.value)}
                 required
                 min={toDateStringInAppTimezone(new Date())}
               />
@@ -241,10 +243,12 @@ export function MeetingModal({
                 Horário <span className="text-destructive">*</span>
               </Label>
               <Input
+                ref={timeInputRef}
                 id="meeting-time"
                 type="time"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
+                onInput={(e) => setTime(e.currentTarget.value)}
                 required
               />
             </div>
@@ -466,7 +470,7 @@ export function MeetingModal({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancelar
           </Button>
-          <Button onClick={handleSave} disabled={loading}>
+          <Button type="button" onClick={handleSave} disabled={loading}>
             {loading ? "Salvando..." : "Marcar Reunião"}
           </Button>
         </DialogFooter>

@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -96,13 +97,21 @@ export function PipelineBoard({
   const [filterDateTo, setFilterDateTo] = useState<string>("");
   const [filterState, setFilterState] = useState<string>("all");
   const [filterNationality, setFilterNationality] = useState<string>("all");
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [draftSearchTerm, setDraftSearchTerm] = useState<string>("");
+  const [draftFilterSource, setDraftFilterSource] = useState<string>("");
+  const [draftFilterStage, setDraftFilterStage] = useState<string>("all");
+  const [draftFilterDateRange, setDraftFilterDateRange] = useState<string>("all");
+  const [draftFilterDateFrom, setDraftFilterDateFrom] = useState<string>("");
+  const [draftFilterDateTo, setDraftFilterDateTo] = useState<string>("");
+  const [draftFilterState, setDraftFilterState] = useState<string>("all");
+  const [draftFilterNationality, setDraftFilterNationality] = useState<string>("all");
   
   // Estados dos popovers
   const [openStage, setOpenStage] = useState(false);
   const [openState, setOpenState] = useState(false);
   const [openNationality, setOpenNationality] = useState(false);
   const [openSource, setOpenSource] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
   
   const supabase = createClient();
   const [states, setStates] = useState<any[]>([]);
@@ -157,7 +166,7 @@ export function PipelineBoard({
   // Aplicar filtros
   const filteredLeads = leads.filter((lead) => {
     // Filtrar leads perdidos do pipeline
-    if (lead.is_lost) {
+    if ((lead as any).is_lost === true) {
       return false;
     }
 
@@ -172,16 +181,41 @@ export function PipelineBoard({
       : true;
 
     let matchesDateRange = true;
-    if (filterDateFrom || filterDateTo) {
-      const leadDate = new Date(lead.created_at);
-      if (filterDateFrom) {
-        matchesDateRange =
-          matchesDateRange && leadDate >= new Date(filterDateFrom);
-      }
-      if (filterDateTo) {
-        const endDate = new Date(filterDateTo);
-        endDate.setHours(23, 59, 59, 999);
-        matchesDateRange = matchesDateRange && leadDate <= endDate;
+    const leadDate = new Date(lead.created_at);
+    const now = new Date();
+
+    if (filterDateRange === "today") {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      matchesDateRange = leadDate >= start && leadDate <= end;
+    } else if (filterDateRange === "7days") {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 6); // hoje + 6 dias anteriores
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      matchesDateRange = leadDate >= start && leadDate <= end;
+    } else if (filterDateRange === "30days") {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      start.setDate(start.getDate() - 29); // hoje + 29 dias anteriores
+      const end = new Date(now);
+      end.setHours(23, 59, 59, 999);
+      matchesDateRange = leadDate >= start && leadDate <= end;
+    } else if (filterDateRange === "custom") {
+      if (filterDateFrom || filterDateTo) {
+        if (filterDateFrom) {
+          const startDate = new Date(filterDateFrom);
+          startDate.setHours(0, 0, 0, 0);
+          matchesDateRange = matchesDateRange && leadDate >= startDate;
+        }
+        if (filterDateTo) {
+          const endDate = new Date(filterDateTo);
+          endDate.setHours(23, 59, 59, 999);
+          matchesDateRange = matchesDateRange && leadDate <= endDate;
+        }
       }
     }
 
@@ -333,10 +367,82 @@ export function PipelineBoard({
   };
 
   const selectedLeadData = leads.find((l) => l.id === activeLeadId);
+  const openFilterDialog = () => {
+    setDraftSearchTerm(searchTerm);
+    setDraftFilterSource(filterSource);
+    setDraftFilterStage(filterStage);
+    setDraftFilterDateRange(filterDateRange);
+    setDraftFilterDateFrom(filterDateFrom);
+    setDraftFilterDateTo(filterDateTo);
+    setDraftFilterState(filterState);
+    setDraftFilterNationality(filterNationality);
+    setFilterDialogOpen(true);
+  };
+
+  const clearAppliedFilters = () => {
+    setSearchTerm("");
+    setFilterSource("");
+    setFilterStage("all");
+    setFilterDateRange("all");
+    setFilterDateFrom("");
+    setFilterDateTo("");
+    setFilterState("all");
+    setFilterNationality("all");
+  };
+
+  const clearDraftFilters = () => {
+    setDraftSearchTerm("");
+    setDraftFilterSource("");
+    setDraftFilterStage("all");
+    setDraftFilterDateRange("all");
+    setDraftFilterDateFrom("");
+    setDraftFilterDateTo("");
+    setDraftFilterState("all");
+    setDraftFilterNationality("all");
+  };
+
+  const applyDraftFilters = () => {
+    setSearchTerm(draftSearchTerm);
+    setFilterSource(draftFilterSource);
+    setFilterStage(draftFilterStage);
+    setFilterDateRange(draftFilterDateRange);
+    setFilterDateFrom(draftFilterDateFrom);
+    setFilterDateTo(draftFilterDateTo);
+    setFilterState(draftFilterState);
+    setFilterNationality(draftFilterNationality);
+    setFilterDialogOpen(false);
+  };
+
+  const activeFilters: string[] = [];
+  if (searchTerm.trim()) activeFilters.push(`Busca: "${searchTerm.trim()}"`);
+  if (filterSource) activeFilters.push(`Fonte: ${sources.find((s) => s.id === filterSource)?.name || "Selecionada"}`);
+  if (filterStage !== "all") activeFilters.push(`Etapa: ${columns.find((c) => c.id === filterStage)?.name || "Selecionada"}`);
+  if (filterDateRange !== "all") {
+    if (filterDateRange === "custom") {
+      activeFilters.push(
+        `Período: ${filterDateFrom || "…"} até ${filterDateTo || "…"}`
+      );
+    } else if (filterDateRange === "today") {
+      activeFilters.push("Data: Hoje");
+    } else if (filterDateRange === "7days") {
+      activeFilters.push("Data: Últimos 7 dias");
+    } else if (filterDateRange === "30days") {
+      activeFilters.push("Data: Últimos 30 dias");
+    }
+  }
+  if (filterState !== "all") {
+    const state = states.find((s) => s.id === filterState);
+    activeFilters.push(`Estado: ${state ? `${state.abbreviation} - ${state.name}` : "Selecionado"}`);
+  }
+  if (filterNationality !== "all") {
+    activeFilters.push(
+      `Nacionalidade: ${nationalities.find((n) => n.id === filterNationality)?.country || "Selecionada"}`
+    );
+  }
 
   return (
     <div className="h-full flex flex-col">
-      <div className="p-6 lg:p-8 border-b border-border bg-gradient-to-r from-transparent via-primary/5 to-transparent">
+      <div className="p-6 lg:p-8 border-b border-border bg-linear-to-r from-transparent via-primary/5 to-transparent">
         <div className="flex items-center justify-between">
           <div className="animate-fade-in">
             <div className="flex items-center gap-2 text-primary mb-1">
@@ -414,322 +520,191 @@ export function PipelineBoard({
 
       {/* Barra de Filtros */}
       <div className="px-6 lg:px-8 py-4 border-b border-border bg-card">
-        <div className="flex items-center justify-between mb-3">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowFilters(!showFilters)}
-            className="gap-2 transition-all hover:shadow-md"
-          >
-            <Filter className={`w-4 h-4 transition-all duration-300 ${showFilters ? "text-primary" : ""}`} />
-            <span className="font-medium">Filtros</span>
-            <ChevronDown className={`w-4 h-4 transition-transform duration-300 ease-in-out ${showFilters ? "rotate-180" : "rotate-0"}`} />
-          </Button>
-          <div className={`transition-all duration-300 ${showFilters ? "opacity-100 translate-x-0" : "opacity-0 -translate-x-4 pointer-events-none"}`}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setSearchTerm("");
-                setFilterSource("");
-                setFilterStage("all");
-                setFilterDateRange("all");
-                setFilterDateFrom("");
-                setFilterDateTo("");
-                setFilterState("all");
-                setFilterNationality("all");
-              }}
-            >
-              Limpar filtros
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={openFilterDialog} className="gap-2">
+              <Filter className="w-4 h-4" />
+              Adicionar Filtro
             </Button>
+            {activeFilters.length > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {activeFilters.length} ativo(s)
+              </Badge>
+            )}
           </div>
+          <Button variant="ghost" size="sm" onClick={clearAppliedFilters} disabled={activeFilters.length === 0}>
+            Limpar filtros
+          </Button>
         </div>
-        
-        <div 
-          className={`overflow-hidden transition-all duration-500 ease-in-out ${
-            showFilters ? "max-h-[500px] opacity-100 mt-4" : "max-h-0 opacity-0 mt-0"
-          }`}
-        >
-          <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-            {/* Busca */}
+
+        {activeFilters.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {activeFilters.map((label) => (
+              <Badge key={label} variant="outline" className="text-xs font-normal">
+                {label}
+              </Badge>
+            ))}
+          </div>
+        )}
+
+        <div className="mt-3 text-xs text-muted-foreground">
+          {filteredLeads.length} lead(s) após filtros
+        </div>
+      </div>
+
+      <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Filtrar Leads</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Buscar Lead</Label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   placeholder="Buscar por nome..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  value={draftSearchTerm}
+                  onChange={(e) => setDraftSearchTerm(e.target.value)}
                   className="pl-9 h-9"
                 />
               </div>
             </div>
 
-            {/* Filtros principais em 3 colunas */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {/* Filtro por Fonte */}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Fonte do Lead</Label>
-              <Popover open={openSource} onOpenChange={setOpenSource}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openSource}
-                    className="h-9 w-full justify-between bg-transparent"
-                  >
-                    {filterSource === "" 
-                      ? "Todas as fontes"
-                      : sources.find((s) => s.id === filterSource)?.name}
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-0">
-                  <Command>
-                    <CommandInput placeholder="Buscar fonte..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhuma fonte encontrada.</CommandEmpty>
-                      <CommandGroup>
-                        <CommandItem
-                          value="all"
-                          onSelect={() => {
-                            setFilterSource("");
-                            setOpenSource(false);
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 h-4 w-4 ${filterSource === "" ? "opacity-100" : "opacity-0"}`}
-                          />
-                          Todas as fontes
-                        </CommandItem>
-                        {sources.map((source) => (
-                          <CommandItem
-                            key={source.id}
-                            value={source.name}
-                            onSelect={() => {
-                              setFilterSource(source.id);
-                              setOpenSource(false);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${filterSource === source.id ? "opacity-100" : "opacity-0"}`}
-                            />
-                            {source.name}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            {/* Filtro por Etapa */}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Etapa do Pipeline</Label>
-              <Popover open={openStage} onOpenChange={setOpenStage}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openStage}
-                    className="h-9 w-full justify-between bg-transparent"
-                  >
-                    {filterStage === "all" 
-                      ? "Todas as etapas"
-                      : columns.find((col) => col.id === filterStage)?.name}
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-0">
-                  <Command>
-                    <CommandInput placeholder="Buscar etapa..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhuma etapa encontrada.</CommandEmpty>
-                      <CommandGroup>
-                        <CommandItem
-                          value="all"
-                          onSelect={() => {
-                            setFilterStage("all");
-                            setOpenStage(false);
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 h-4 w-4 ${filterStage === "all" ? "opacity-100" : "opacity-0"}`}
-                          />
-                          Todas as etapas
-                        </CommandItem>
-                        {columns.map((col) => (
-                          <CommandItem
-                            key={col.id}
-                            value={col.name}
-                            onSelect={() => {
-                              setFilterStage(col.id);
-                              setOpenStage(false);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${filterStage === col.id ? "opacity-100" : "opacity-0"}`}
-                            />
-                            {col.name}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            {/* Filtro por Data */}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Data de Entrada</Label>
-              <Select value={filterDateRange} onValueChange={setFilterDateRange}>
-                <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Todas as datas" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Todas as datas</SelectItem>
-                  <SelectItem value="today">Hoje</SelectItem>
-                  <SelectItem value="7days">Últimos 7 dias</SelectItem>
-                  <SelectItem value="30days">Últimos 30 dias</SelectItem>
-                  <SelectItem value="custom">Intervalo personalizado</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Filtro por Estado (EUA) */}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Estado (EUA)</Label>
-              <Popover open={openState} onOpenChange={setOpenState}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openState}
-                    className="h-9 w-full justify-between bg-transparent"
-                  >
-                    {filterState === "all" 
-                      ? "Todos os estados"
-                      : `${states.find((s) => s.id === filterState)?.abbreviation} - ${states.find((s) => s.id === filterState)?.name}`}
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-0">
-                  <Command>
-                    <CommandInput placeholder="Buscar estado..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhum estado encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        <CommandItem
-                          value="all"
-                          onSelect={() => {
-                            setFilterState("all");
-                            setOpenState(false);
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 h-4 w-4 ${filterState === "all" ? "opacity-100" : "opacity-0"}`}
-                          />
-                          Todos os estados
-                        </CommandItem>
-                        {states.map((state) => (
-                          <CommandItem
-                            key={state.id}
-                            value={`${state.abbreviation} ${state.name}`}
-                            onSelect={() => {
-                              setFilterState(state.id);
-                              setOpenState(false);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${filterState === state.id ? "opacity-100" : "opacity-0"}`}
-                            />
-                            {state.abbreviation} - {state.name}
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            </div>
-
-            {/* Filtros secundários em 2 colunas */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {/* Filtro por Estado (EUA) */}
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Estado (EUA)</Label>
-              <Popover open={openState} onOpenChange={setOpenState}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openState}
-                    className="h-9 w-full justify-between bg-transparent"
-                  >
-                    {filterState === "all" 
-                      ? "Todos os estados"
-                      : `${states.find((s) => s.id === filterState)?.abbreviation} - ${states.find((s) => s.id === filterState)?.name}`}
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[300px] p-0">
-                  <Command>
-                    <CommandInput placeholder="Buscar estado..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhum estado encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        <CommandItem
-                          value="all"
-                          onSelect={() => {
-                            setFilterState("all");
-                            setOpenState(false);
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 h-4 w-4 ${filterState === "all" ? "opacity-100" : "opacity-0"}`}
-                          />
-                          Todos os estados
-                        </CommandItem>
-                        {states.map((state) => (
-                          <CommandItem
-                            key={state.id}
-                            value={`${state.abbreviation} ${state.name}`}
-                            onSelect={() => {
-                              setFilterState(state.id);
-                              setOpenState(false);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${filterState === state.id ? "opacity-100" : "opacity-0"}`}
-                            />
-                            {state.abbreviation} - {state.name}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Fonte do Lead</Label>
+                <Popover open={openSource} onOpenChange={setOpenSource}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" aria-expanded={openSource} className="h-9 w-full justify-between bg-transparent">
+                      {draftFilterSource === "" ? "Todas as fontes" : sources.find((s) => s.id === draftFilterSource)?.name}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[300px] p-0">
+                    <Command>
+                      <CommandInput placeholder="Buscar fonte..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhuma fonte encontrada.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem value="all" onSelect={() => { setDraftFilterSource(""); setOpenSource(false); }}>
+                            <Check className={`mr-2 h-4 w-4 ${draftFilterSource === "" ? "opacity-100" : "opacity-0"}`} />
+                            Todas as fontes
                           </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+                          {sources.map((source) => (
+                            <CommandItem key={source.id} value={source.name} onSelect={() => { setDraftFilterSource(source.id); setOpenSource(false); }}>
+                              <Check className={`mr-2 h-4 w-4 ${draftFilterSource === source.id ? "opacity-100" : "opacity-0"}`} />
+                              {source.name}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Etapa do Pipeline</Label>
+                <Popover open={openStage} onOpenChange={setOpenStage}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" aria-expanded={openStage} className="h-9 w-full justify-between bg-transparent">
+                      {draftFilterStage === "all" ? "Todas as etapas" : columns.find((col) => col.id === draftFilterStage)?.name}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[300px] p-0">
+                    <Command>
+                      <CommandInput placeholder="Buscar etapa..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhuma etapa encontrada.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem value="all" onSelect={() => { setDraftFilterStage("all"); setOpenStage(false); }}>
+                            <Check className={`mr-2 h-4 w-4 ${draftFilterStage === "all" ? "opacity-100" : "opacity-0"}`} />
+                            Todas as etapas
+                          </CommandItem>
+                          {columns.map((col) => (
+                            <CommandItem key={col.id} value={col.name} onSelect={() => { setDraftFilterStage(col.id); setOpenStage(false); }}>
+                              <Check className={`mr-2 h-4 w-4 ${draftFilterStage === col.id ? "opacity-100" : "opacity-0"}`} />
+                              {col.name}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Data de Entrada</Label>
+                <Select
+                  value={draftFilterDateRange}
+                  onValueChange={(value) => {
+                    setDraftFilterDateRange(value);
+                    if (value !== "custom") {
+                      setDraftFilterDateFrom("");
+                      setDraftFilterDateTo("");
+                    }
+                  }}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Todas as datas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as datas</SelectItem>
+                    <SelectItem value="today">Hoje</SelectItem>
+                    <SelectItem value="7days">Últimos 7 dias</SelectItem>
+                    <SelectItem value="30days">Últimos 30 dias</SelectItem>
+                    <SelectItem value="custom">Range de datas</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Estado (EUA)</Label>
+                <Popover open={openState} onOpenChange={setOpenState}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" aria-expanded={openState} className="h-9 w-full justify-between bg-transparent">
+                      {draftFilterState === "all"
+                        ? "Todos os estados"
+                        : `${states.find((s) => s.id === draftFilterState)?.abbreviation} - ${states.find((s) => s.id === draftFilterState)?.name}`}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[300px] p-0">
+                    <Command>
+                      <CommandInput placeholder="Buscar estado..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhum estado encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem value="all" onSelect={() => { setDraftFilterState("all"); setOpenState(false); }}>
+                            <Check className={`mr-2 h-4 w-4 ${draftFilterState === "all" ? "opacity-100" : "opacity-0"}`} />
+                            Todos os estados
+                          </CommandItem>
+                          {states.map((state) => (
+                            <CommandItem key={state.id} value={`${state.abbreviation} ${state.name}`} onSelect={() => { setDraftFilterState(state.id); setOpenState(false); }}>
+                              <Check className={`mr-2 h-4 w-4 ${draftFilterState === state.id ? "opacity-100" : "opacity-0"}`} />
+                              {state.abbreviation} - {state.name}
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
 
-            {/* Filtro por Nacionalidade */}
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Nacionalidade</Label>
               <Popover open={openNationality} onOpenChange={setOpenNationality}>
                 <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={openNationality}
-                    className="h-9 w-full justify-between bg-transparent"
-                  >
-                    {filterNationality === "all" 
+                  <Button variant="outline" role="combobox" aria-expanded={openNationality} className="h-9 w-full justify-between bg-transparent">
+                    {draftFilterNationality === "all"
                       ? "Todas as nacionalidades"
-                      : nationalities.find((n) => n.id === filterNationality)?.country}
+                      : nationalities.find((n) => n.id === draftFilterNationality)?.country}
                     <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
@@ -739,30 +714,13 @@ export function PipelineBoard({
                     <CommandList>
                       <CommandEmpty>Nenhuma nacionalidade encontrada.</CommandEmpty>
                       <CommandGroup>
-                        <CommandItem
-                          value="all"
-                          onSelect={() => {
-                            setFilterNationality("all");
-                            setOpenNationality(false);
-                          }}
-                        >
-                          <Check
-                            className={`mr-2 h-4 w-4 ${filterNationality === "all" ? "opacity-100" : "opacity-0"}`}
-                          />
+                        <CommandItem value="all" onSelect={() => { setDraftFilterNationality("all"); setOpenNationality(false); }}>
+                          <Check className={`mr-2 h-4 w-4 ${draftFilterNationality === "all" ? "opacity-100" : "opacity-0"}`} />
                           Todas as nacionalidades
                         </CommandItem>
                         {nationalities.map((nationality) => (
-                          <CommandItem
-                            key={nationality.id}
-                            value={nationality.country}
-                            onSelect={() => {
-                              setFilterNationality(nationality.id);
-                              setOpenNationality(false);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${filterNationality === nationality.id ? "opacity-100" : "opacity-0"}`}
-                            />
+                          <CommandItem key={nationality.id} value={nationality.country} onSelect={() => { setDraftFilterNationality(nationality.id); setOpenNationality(false); }}>
+                            <Check className={`mr-2 h-4 w-4 ${draftFilterNationality === nationality.id ? "opacity-100" : "opacity-0"}`} />
                             {nationality.country}
                           </CommandItem>
                         ))}
@@ -772,34 +730,34 @@ export function PipelineBoard({
                 </PopoverContent>
               </Popover>
             </div>
-            </div>
 
-            {/* Data personalizada */}
-            {filterDateRange === "custom" && (
+            {draftFilterDateRange === "custom" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Data inicial</Label>
-                  <Input
-                    type="date"
-                    value={filterDateFrom}
-                    onChange={(e) => setFilterDateFrom(e.target.value)}
-                    className="h-9"
-                  />
+                  <Input type="date" value={draftFilterDateFrom} onChange={(e) => setDraftFilterDateFrom(e.target.value)} className="h-9" />
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Data final</Label>
-                  <Input
-                    type="date"
-                    value={filterDateTo}
-                    onChange={(e) => setFilterDateTo(e.target.value)}
-                    className="h-9"
-                  />
+                  <Input type="date" value={draftFilterDateTo} onChange={(e) => setDraftFilterDateTo(e.target.value)} className="h-9" />
                 </div>
               </div>
             )}
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={clearDraftFilters}>
+                Limpar seleção
+              </Button>
+              <Button variant="outline" onClick={() => setFilterDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button onClick={applyDraftFilters}>
+                Filtrar
+              </Button>
+            </div>
           </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
       <div 
         ref={scrollContainerRef}

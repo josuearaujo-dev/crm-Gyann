@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { createClient } from "@/lib/supabase/client";
 import type { Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { formatInAppTimezone } from "@/lib/timezone";
+import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
 
 interface TimelineViewProps {
   initialTasks: (Task & { leads: { name: string; email: string; company: string | null } | null })[];
@@ -361,7 +361,7 @@ export function TimelineView({ initialTasks, userId }: TimelineViewProps) {
                                           <Clock className="w-3 h-3 mr-1" />
                                           {formatInAppTimezone(task.scheduled_at, { hour: '2-digit', minute: '2-digit' })}
                                         </Badge>
-                                        {task.status === 'overdue' && !task.completed && (
+                                        {!task.completed && isOverdueNextDayInAppTimezone(task.scheduled_at || task.due_date) && (
                                           <Badge variant="destructive" className="text-xs">Atrasada</Badge>
                                         )}
                                       </>

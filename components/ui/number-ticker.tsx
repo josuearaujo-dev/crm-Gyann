@@ -11,18 +11,22 @@ export default function NumberTicker({
   delay = 0,
   className,
   decimalPlaces = 0,
+  stiffness = 180,
+  damping = 30,
 }: {
   value: number;
   direction?: "up" | "down";
   className?: string;
   delay?: number;
   decimalPlaces?: number;
+  stiffness?: number;
+  damping?: number;
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const motionValue = useMotionValue(direction === "down" ? value : 0);
   const springValue = useSpring(motionValue, {
-    damping: 60,
-    stiffness: 100,
+    damping,
+    stiffness,
   });
   const isInView = useInView(ref, { once: true, margin: "0px" });
 
