@@ -13,7 +13,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Pencil, X, Check } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Pencil, X, Check, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Meeting } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -66,6 +75,9 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
     status: string;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteMeetingId, setDeleteMeetingId] = useState<string | null>(null);
+  const [deletingMeeting, setDeletingMeeting] = useState(false);
 
   const getDaysInMonth = (date: Date) => {
     const year = date.getFullYear();
@@ -145,6 +157,32 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
     const { error } = await supabase.from("meetings").update({ status: "done" }).eq("id", meetingId);
     if (!error) {
       setMeetings((prev) => prev.map((m) => (m.id === meetingId ? { ...m, status: "done" as const } : m)));
+    }
+  };
+
+  const openDeleteConfirm = (meetingId: string) => {
+    setDeleteMeetingId(meetingId);
+    setDeleteDialogOpen(true);
+  };
+
+  const confirmDeleteMeeting = async () => {
+    if (!deleteMeetingId) return;
+    setDeletingMeeting(true);
+    try {
+      const { error } = await supabase.from("meetings").delete().eq("id", deleteMeetingId);
+      if (error) {
+        console.error("[meetings-calendar] delete:", error);
+        alert("Não foi possível apagar a reunião. Tente novamente.");
+        return;
+      }
+      setMeetings((prev) => prev.filter((m) => m.id !== deleteMeetingId));
+      if (editingMeeting?.id === deleteMeetingId) {
+        cancelEdit();
+      }
+      setDeleteDialogOpen(false);
+      setDeleteMeetingId(null);
+    } finally {
+      setDeletingMeeting(false);
     }
   };
 
@@ -308,12 +346,25 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
                               <Label className="text-xs">Notas</Label>
                               <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={3} className="resize-none" />
                             </div>
-                            <div className="flex gap-2 pt-1">
-                              <Button size="sm" className="flex-1 gap-2" onClick={saveEdit} disabled={savingEdit}>
-                                <Check className="w-4 h-4" />
-                                {savingEdit ? "Salvando..." : "Salvar"}
+                            <div className="flex flex-col gap-2 pt-1">
+                              <div className="flex gap-2">
+                                <Button size="sm" className="flex-1 gap-2" onClick={saveEdit} disabled={savingEdit}>
+                                  <Check className="w-4 h-4" />
+                                  {savingEdit ? "Salvando..." : "Salvar"}
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={cancelEdit}>Cancelar</Button>
+                              </div>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                disabled={savingEdit || deletingMeeting}
+                                onClick={() => openDeleteConfirm(meeting.id)}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                                Apagar reunião
                               </Button>
-                              <Button size="sm" variant="outline" onClick={cancelEdit}>Cancelar</Button>
                             </div>
                           </div>
                         ) : (
@@ -329,6 +380,15 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
                                 </Badge>
                                 <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground" onClick={() => openEdit(meeting)}>
                                   <Pencil className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                                  title="Apagar reunião"
+                                  onClick={() => openDeleteConfirm(meeting.id)}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </Button>
                               </div>
                             </div>
@@ -391,6 +451,34 @@ export function MeetingsCalendarView({ initialMeetings, userId }: MeetingsCalend
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) setDeleteMeetingId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Apagar esta reunião?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A reunião será removida permanentemente. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingMeeting}>Cancelar</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingMeeting}
+              onClick={() => void confirmDeleteMeeting()}
+            >
+              {deletingMeeting ? "Apagando…" : "Apagar"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

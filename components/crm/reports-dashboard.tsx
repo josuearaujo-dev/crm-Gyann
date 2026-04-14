@@ -49,6 +49,7 @@ import { formatCurrency } from "@/lib/timezone";
 interface ReportsDashboardProps {
   leads: (Lead & {
     lead_tags?: { tags: { id: string; name: string; color: string } }[];
+    excluded_from_reports?: boolean | null;
   })[];
   columns: PipelineColumn[];
   sources: LeadSource[];
@@ -164,6 +165,7 @@ export function ReportsDashboard({
     // Leads criados dentro do range (exceto perdidos)
     const rangeLeads = leads.filter((lead) => {
       if (lead.is_lost) return false;
+      if (lead.excluded_from_reports) return false;
       const created = new Date(lead.created_at);
       return created >= rStart && created <= rEnd;
     });
@@ -239,6 +241,7 @@ export function ReportsDashboard({
     const end = new Date(selectedCampaign.end_date + "T23:59:59");
     return leads.filter((lead) => {
       if (lead.is_lost) return false;
+      if (lead.excluded_from_reports) return false;
       const created = new Date(lead.created_at);
       return created >= start && created <= end;
     });

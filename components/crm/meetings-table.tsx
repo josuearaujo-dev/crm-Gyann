@@ -21,7 +21,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { Search, Pencil, X, Check, Clock } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Search, Pencil, X, Check, Clock, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import type { Meeting } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -70,6 +79,8 @@ export function MeetingsTable({ initialMeetings }: MeetingsTableProps) {
     status: string;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingMeeting, setDeletingMeeting] = useState(false);
 
   const filtered = meetings.filter((m) => {
     const matchesSearch =
@@ -115,6 +126,25 @@ export function MeetingsTable({ initialMeetings }: MeetingsTableProps) {
       setEditForm(null);
     }
     setSavingEdit(false);
+  };
+
+  const handleDeleteMeeting = async () => {
+    if (!editingMeeting) return;
+    setDeletingMeeting(true);
+    try {
+      const { error } = await supabase.from("meetings").delete().eq("id", editingMeeting.id);
+      if (error) {
+        console.error("[meetings-table] delete:", error);
+        alert("Não foi possível apagar a reunião. Tente novamente.");
+        return;
+      }
+      setMeetings((prev) => prev.filter((m) => m.id !== editingMeeting.id));
+      setDeleteDialogOpen(false);
+      setEditingMeeting(null);
+      setEditForm(null);
+    } finally {
+      setDeletingMeeting(false);
+    }
   };
 
   return (
@@ -226,7 +256,16 @@ export function MeetingsTable({ initialMeetings }: MeetingsTableProps) {
       </CardContent>
 
       {/* Sheet de edição */}
-      <Sheet open={!!editingMeeting} onOpenChange={(open) => { if (!open) { setEditingMeeting(null); setEditForm(null); } }}>
+      <Sheet
+        open={!!editingMeeting}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditingMeeting(null);
+            setEditForm(null);
+            setDeleteDialogOpen(false);
+          }
+        }}
+      >
         <SheetContent className="w-full sm:max-w-[480px] overflow-y-auto px-6">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
@@ -273,20 +312,54 @@ export function MeetingsTable({ initialMeetings }: MeetingsTableProps) {
                 <Label className="text-xs">Notas</Label>
                 <Textarea value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} rows={4} className="resize-none" />
               </div>
-              <div className="flex gap-2 pt-2">
-                <Button className="flex-1 gap-2" onClick={saveEdit} disabled={savingEdit}>
-                  <Check className="w-4 h-4" />
-                  {savingEdit ? "Salvando..." : "Salvar"}
-                </Button>
-                <Button variant="outline" onClick={() => { setEditingMeeting(null); setEditForm(null); }}>
-                  <X className="w-4 h-4 mr-1" />
-                  Cancelar
+              <div className="flex flex-col gap-2 pt-2">
+                <div className="flex gap-2">
+                  <Button className="flex-1 gap-2" onClick={saveEdit} disabled={savingEdit}>
+                    <Check className="w-4 h-4" />
+                    {savingEdit ? "Salvando..." : "Salvar"}
+                  </Button>
+                  <Button variant="outline" onClick={() => { setEditingMeeting(null); setEditForm(null); }}>
+                    <X className="w-4 h-4 mr-1" />
+                    Cancelar
+                  </Button>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  disabled={savingEdit || deletingMeeting}
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Apagar reunião
                 </Button>
               </div>
             </div>
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Apagar esta reunião?</AlertDialogTitle>
+            <AlertDialogDescription>
+              A reunião será removida permanentemente. Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingMeeting}>Cancelar</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingMeeting}
+              onClick={() => void handleDeleteMeeting()}
+            >
+              {deletingMeeting ? "Apagando…" : "Apagar"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

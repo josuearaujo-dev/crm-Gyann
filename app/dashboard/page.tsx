@@ -40,17 +40,20 @@ export default async function HomePage() {
   const { data: recentLeads } = await supabase
     .from("leads")
     .select("*, lead_sources(name), pipeline_columns(name)")
+    .eq("excluded_from_reports", false)
     .order("created_at", { ascending: false })
     .limit(5);
 
   const { data: leadStats } = await supabase
     .from("leads")
-    .select("id, created_at, deal_value, column_id");
+    .select("id, created_at, deal_value, column_id, is_lost, excluded_from_reports");
 
   const { data: pipelineColumns } = await supabase
     .from("pipeline_columns")
     .select("id, name, color, position, created_by, created_at, updated_at")
     .order("position", { ascending: true });
+
+  const { data: tags } = await supabase.from("tags").select("*");
 
   const { data: campaigns } = await supabase
     .from("campaigns")
@@ -81,6 +84,7 @@ export default async function HomePage() {
       recentLeads={recentLeads || []}
       leadStats={leadStats || []}
       pipelineColumns={pipelineColumns || []}
+      tags={tags || []}
       campaigns={campaigns || []}
       taskStats={taskStats || []}
       potentialValue={potentialValue?.total_potential || 0}

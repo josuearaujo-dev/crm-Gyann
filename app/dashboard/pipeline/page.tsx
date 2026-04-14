@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { PipelineBoard } from "@/components/crm/pipeline-board";
 
@@ -16,6 +17,8 @@ export default async function PipelinePage() {
     .from("leads")
     .select("*, lead_sources(name, type), lead_tags(tags(*)), us_states(name, abbreviation), nationalities(country, nationality)")
     .neq("is_lost", true)
+    .eq("is_finished", false)
+    .eq("excluded_from_reports", false)
     .order("created_at", { ascending: false });
 
   const { data: tags } = await supabase
@@ -28,12 +31,14 @@ export default async function PipelinePage() {
     .order("name", { ascending: true });
 
   return (
-    <PipelineBoard
-      initialColumns={columns || []}
-      initialLeads={leads || []}
-      tags={tags || []}
-      sources={sources || []}
-      userId={user?.id || ""}
-    />
+    <Suspense fallback={<div className="p-8 text-sm text-muted-foreground">Carregando pipeline…</div>}>
+      <PipelineBoard
+        initialColumns={columns || []}
+        initialLeads={leads || []}
+        tags={tags || []}
+        sources={sources || []}
+        userId={user?.id || ""}
+      />
+    </Suspense>
   );
 }

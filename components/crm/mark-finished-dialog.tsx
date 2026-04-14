@@ -43,6 +43,7 @@ export function MarkFinishedDialog({
           is_finished: true,
           finished_at: new Date().toISOString(),
           finished_notes: notes.trim() || null,
+          column_id: null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", leadId);

@@ -64,6 +64,15 @@ import { MeetingModal } from "@/components/crm/meeting-modal";
 import { MarkLostDialog } from "@/components/crm/mark-lost-dialog";
 import { MarkFinishedDialog } from "@/components/crm/mark-finished-dialog";
 import { formatInAppTimezone, isOverdueNextDayInAppTimezone } from "@/lib/timezone";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface LeadDetailProps {
   lead: Lead & {
@@ -115,6 +124,8 @@ export function LeadDetail({
   const [isMarkingWon, setIsMarkingWon] = useState(false);
   const [showLostDialog, setShowLostDialog] = useState(false);
   const [showFinishedDialog, setShowFinishedDialog] = useState(false);
+  const [excludeFromReportsOpen, setExcludeFromReportsOpen] = useState(false);
+  const [excludingFromReports, setExcludingFromReports] = useState(false);
   const [installments, setInstallments] = useState<LeadInstallment[]>([]);
   const [firstDueForGen, setFirstDueForGen] = useState(() =>
     new Date().toISOString().slice(0, 10)
@@ -526,6 +537,34 @@ export function LeadDetail({
     }
   };
 
+  const handleExcludeFromReports = async () => {
+    setExcludingFromReports(true);
+    try {
+      const { error } = await supabase
+        .from("leads")
+        .update({
+          excluded_from_reports: true,
+          column_id: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", lead.id);
+
+      if (error) {
+        console.error("[v0] Error excluding lead from reports:", error);
+        alert("Não foi possível deletar o lead. Tente novamente.");
+        return;
+      }
+      setExcludeFromReportsOpen(false);
+      onUpdate();
+      onClose();
+    } catch (err) {
+      console.error("[v0] Error in handleExcludeFromReports:", err);
+      alert("Erro ao deletar o lead.");
+    } finally {
+      setExcludingFromReports(false);
+    }
+  };
+
   const handleTagToggle = async (tagId: string) => {
     const isSelected = selectedTags.includes(tagId);
 
@@ -906,14 +945,27 @@ export function LeadDetail({
                         Marcar como Perdido
                       </Button>
                     </div>
-                    <Button
-                      onClick={() => setShowFinishedDialog(true)}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      <CheckCircle className="w-4 h-4 mr-2" />
-                      Marcar como Finalizado
-                    </Button>
+                    {!lead.is_finished && (
+                      <Button
+                        onClick={() => setShowFinishedDialog(true)}
+                        variant="outline"
+                        className="w-full"
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Marcar como Finalizado
+                      </Button>
+                    )}
+                    {!lead.excluded_from_reports && (
+                      <Button
+                        type="button"
+                        onClick={() => setExcludeFromReportsOpen(true)}
+                        variant="outline"
+                        className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Deletar Lead
+                      </Button>
+                    )}
                   </div>
           </div>
 
@@ -1404,6 +1456,29 @@ export function LeadDetail({
         </div>
       </SheetContent>
     </Sheet>
+
+    <AlertDialog open={excludeFromReportsOpen} onOpenChange={setExcludeFromReportsOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Deletar este lead?</AlertDialogTitle>
+          <AlertDialogDescription>
+            O lead <strong>sai do pipeline</strong> (coluna removida) e <strong>deixa de entrar nas contagens</strong> de relatórios e analytics.
+            O cadastro permanece no banco apenas para histórico interno; não é um apagamento físico do registro.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={excludingFromReports}>Cancelar</AlertDialogCancel>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={excludingFromReports}
+            onClick={() => void handleExcludeFromReports()}
+          >
+            {excludingFromReports ? "Deletando…" : "Deletar"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     <MarkLostDialog
       open={showLostDialog}

@@ -28,12 +28,23 @@ import {
   Sparkles,
   AlertCircle,
 } from "lucide-react";
-import type { Lead, Task, Profile, Meeting } from "@/lib/types";
+import type { Lead, Task, Profile, Meeting, Tag, PipelineColumn } from "@/lib/types";
 import type { Campaign } from "./campaign-manager";
 import { getWonPipelineColumn } from "@/lib/pipeline-utils";
 import BorderBeam from "@/components/ui/border-beam"; // Import BorderBeam
 import NumberTicker from "@/components/ui/number-ticker"; // Import NumberTicker
 import { TaskDetail } from "./task-detail";
+import { LeadDetail } from "./lead-detail";
+
+type HomeLeadDetailRow = Lead & {
+  lead_sources: { name: string; type: string } | null;
+  lead_tags: { tags: Tag }[];
+  us_states?: { name: string; abbreviation: string } | null;
+  nationalities?: { country: string; nationality: string } | null;
+};
+
+const LEAD_DETAIL_SELECT =
+  "*, lead_sources(name, type), lead_tags(tags(*)), us_states(name, abbreviation), nationalities(country, nationality)";
 
 interface HomeContentProps {
   profile: Profile | null;
@@ -43,8 +54,16 @@ interface HomeContentProps {
     lead_sources: { name: string } | null;
     pipeline_columns: { name: string } | null;
   })[];
-  leadStats: { id: string; created_at: string; deal_value: number; column_id: string | null }[];
-  pipelineColumns: { id: string; name: string }[];
+  leadStats: {
+    id: string;
+    created_at: string;
+    deal_value: number;
+    column_id: string | null;
+    is_lost?: boolean | null;
+    excluded_from_reports?: boolean | null;
+  }[];
+  pipelineColumns: PipelineColumn[];
+  tags: Tag[];
   campaigns: Campaign[];
   taskStats: { id: string; completed: boolean }[];
   potentialValue: number;
@@ -58,6 +77,7 @@ export function HomeContent({
   recentLeads,
   leadStats,
   pipelineColumns,
+  tags,
   campaigns,
   taskStats: initialTaskStats,
   potentialValue,
@@ -69,6 +89,38 @@ export function HomeContent({
   const [todayMeetings, setTodayMeetings] = useState(initialTodayMeetings);
   const [taskStats, setTaskStats] = useState(initialTaskStats);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [meetingSheetLead, setMeetingSheetLead] = useState<HomeLeadDetailRow | null>(null);
+  const [meetingSheetLoadingLeadId, setMeetingSheetLoadingLeadId] = useState<string | null>(null);
+
+  const fetchLeadForMeetingSheet = async (leadId: string) => {
+    const { data, error } = await supabase
+      .from("leads")
+      .select(LEAD_DETAIL_SELECT)
+      .eq("id", leadId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as HomeLeadDetailRow;
+  };
+
+  const openMeetingLeadSheet = async (leadId: string) => {
+    setMeetingSheetLoadingLeadId(leadId);
+    try {
+      const row = await fetchLeadForMeetingSheet(leadId);
+      if (row) setMeetingSheetLead(row);
+    } finally {
+      setMeetingSheetLoadingLeadId(null);
+    }
+  };
+
+  const closeMeetingLeadSheet = () => setMeetingSheetLead(null);
+
+  const handleMeetingLeadSheetUpdate = async () => {
+    if (meetingSheetLead?.id) {
+      const row = await fetchLeadForMeetingSheet(meetingSheetLead.id);
+      if (row) setMeetingSheetLead(row);
+    }
+    router.refresh();
+  };
   const [filterMode, setFilterMode] = useState<"month" | "range" | "campaign">("month");
   const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [rangeStart, setRangeStart] = useState<string>(() => {
@@ -130,9 +182,12 @@ export function HomeContent({
   }, [filterMode, selectedCampaign, selectedMonth, rangeStart, rangeEnd]);
 
   const filteredLeadStats = useMemo(() => {
+    const inFunnelStats = leadStats.filter(
+      (l) => !l.is_lost && !l.excluded_from_reports
+    );
     if (filterMode === "campaign" && !selectedCampaign) return [];
-    if (!periodWindow) return leadStats;
-    return leadStats.filter((l) => {
+    if (!periodWindow) return inFunnelStats;
+    return inFunnelStats.filter((l) => {
       const d = l.created_at.slice(0, 10);
       return d >= periodWindow.start && d <= periodWindow.end;
     });
@@ -546,7 +601,28 @@ export function HomeContent({
                 {todayMeetings.map((meeting, index) => (
                   <div
                     key={meeting.id}
-                    className="flex flex-col gap-2 p-4 rounded-xl bg-muted/50 hover:bg-muted border border-transparent hover:border-border/50 transition-all duration-200"
+                    role={meeting.lead_id ? "button" : undefined}
+                    tabIndex={meeting.lead_id ? 0 : undefined}
+                    onClick={() => {
+                      if (meeting.lead_id && !meetingSheetLoadingLeadId) {
+                        void openMeetingLeadSheet(meeting.lead_id);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (
+                        meeting.lead_id &&
+                        !meetingSheetLoadingLeadId &&
+                        (e.key === "Enter" || e.key === " ")
+                      ) {
+                        e.preventDefault();
+                        void openMeetingLeadSheet(meeting.lead_id);
+                      }
+                    }}
+                    className={cn(
+                      "flex flex-col gap-2 p-4 rounded-xl bg-muted/50 hover:bg-muted border border-transparent hover:border-border/50 transition-all duration-200",
+                      meeting.lead_id && "cursor-pointer",
+                      meetingSheetLoadingLeadId === meeting.lead_id && "opacity-60 pointer-events-none"
+                    )}
                     style={{ animationDelay: `${index * 50}ms` }}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -590,6 +666,7 @@ export function HomeContent({
                         href={meeting.meeting_link}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="text-xs text-primary hover:underline truncate"
                       >
                         {meeting.meeting_link}
@@ -597,7 +674,11 @@ export function HomeContent({
                     )}
 
                     <button
-                      onClick={() => handleMeetingDone(meeting.id, meeting.lead_id)}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMeetingDone(meeting.id, meeting.lead_id);
+                      }}
                       className="mt-2 px-3 py-1.5 bg-chart-2/10 hover:bg-chart-2/20 text-chart-2 rounded-lg text-xs font-medium transition-colors"
                     >
                       Marcar como Feita
@@ -693,6 +774,16 @@ export function HomeContent({
         router.refresh();
       }}
     />
+
+    {meetingSheetLead && (
+      <LeadDetail
+        lead={meetingSheetLead as Parameters<typeof LeadDetail>[0]["lead"]}
+        tags={tags}
+        columns={pipelineColumns}
+        onClose={closeMeetingLeadSheet}
+        onUpdate={handleMeetingLeadSheetUpdate}
+      />
+    )}
   </>
   );
 }

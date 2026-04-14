@@ -11,6 +11,7 @@ export default async function AnalyticsPage() {
   const { data: leads } = await supabase
     .from("leads")
     .select("*, lead_sources(name, type), pipeline_columns(name, color), us_states(name, abbreviation)")
+    .eq("excluded_from_reports", false)
     .order("created_at", { ascending: false });
 
   const { data: columns } = await supabase

@@ -67,6 +67,13 @@ export interface Lead {
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
+  /** Lead sem resposta no primeiro contato — sai do funil, continua nas métricas de relatório. */
+  is_finished?: boolean | null
+  finished_at?: string | null
+  finished_notes?: string | null
+  is_lost?: boolean | null
+  /** Removido do funil e excluído das contagens de relatórios. */
+  excluded_from_reports?: boolean | null
   // Relations
   source?: LeadSource | null
   column?: PipelineColumn | null

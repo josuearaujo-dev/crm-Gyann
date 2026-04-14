@@ -17,6 +17,7 @@ export default async function LeadsPage() {
       *,
       loss_reason:loss_reasons(id, name)
     `)
+    .eq("excluded_from_reports", false)
     .order("created_at", { ascending: false });
 
   // Buscar colunas do pipeline

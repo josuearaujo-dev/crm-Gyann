@@ -3,6 +3,7 @@
 import React from "react"
 
 import { useState, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -114,6 +115,8 @@ export function PipelineBoard({
   const [openSource, setOpenSource] = useState(false);
   
   const supabase = createClient();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [states, setStates] = useState<any[]>([]);
   const [nationalities, setNationalities] = useState<any[]>([]);
 
@@ -122,6 +125,13 @@ export function PipelineBoard({
   useEffect(() => {
     loadFiltersData();
   }, []);
+
+  useEffect(() => {
+    const leadId = searchParams.get("lead");
+    if (leadId && leads.some((l) => l.id === leadId)) {
+      setSelectedLead(leadId);
+    }
+  }, [searchParams, leads]);
 
   const loadFiltersData = async () => {
     const { data: statesData } = await supabase
@@ -167,6 +177,12 @@ export function PipelineBoard({
   const filteredLeads = leads.filter((lead) => {
     // Filtrar leads perdidos do pipeline
     if ((lead as any).is_lost === true) {
+      return false;
+    }
+    if ((lead as any).is_finished === true) {
+      return false;
+    }
+    if ((lead as any).excluded_from_reports === true) {
       return false;
     }
 
@@ -352,13 +368,19 @@ export function PipelineBoard({
 
   const handleCloseDetail = () => {
     setSelectedLead(null);
+    if (searchParams.get("lead")) {
+      router.replace("/dashboard/pipeline");
+    }
   };
 
   const handleLeadUpdate = async () => {
     // Recarrega apenas os dados necessários sem refresh da página
     const { data: updatedLeads } = await supabase
       .from("leads")
-      .select("*, lead_sources(name, type), lead_tags(tags(*))")
+      .select("*, lead_sources(name, type), lead_tags(tags(*)), us_states(name, abbreviation), nationalities(country, nationality)")
+      .neq("is_lost", true)
+      .eq("is_finished", false)
+      .eq("excluded_from_reports", false)
       .order("created_at", { ascending: false });
     
     if (updatedLeads) {
