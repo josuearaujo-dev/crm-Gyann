@@ -1,0 +1,60 @@
+{
+  "generatedAt": "2026-04-02T13:36:43.252Z",
+  "filters": {
+    "mode": "campaign",
+    "campaignId": "a23737b0-4099-460a-88d8-6dfe82fa515e",
+    "campaignName": "Campanha Janeiro/fevereiro",
+    "sourceId": "all",
+    "sourceName": "Todas as fontes",
+    "period": "2026-01-26 -> 2026-02-14"
+  },
+  "dataUsed": {
+    "totalLeadsLoaded": 46,
+    "leadsAfterPeriodAndSource": 39,
+    "meetingsLoaded": 4,
+    "wonColumnId": "18e042dc-27af-427f-8c38-4f24c3663f28",
+    "wonColumnName": "Venda Feita"
+  },
+  "formulas": {
+    "leadToSaleRate": "cohortWonLeads / totalLeads * 100",
+    "qualifiedToSaleRate": "totalSales / qualifiedCount * 100",
+    "leadToMeetingRate": "meetingsHeldCount / totalLeads * 100",
+    "meetingToSaleRate": "salesFromMeetings / meetingsHeldCount * 100",
+    "meetingsPerSale": "meetingsHeldCount / totalSales",
+    "cpl": "investment / totalLeads",
+    "cac": "investment / totalSales",
+    "roasX": "cashIn / investment",
+    "roiPercent": "(cashIn - investment) / investment * 100",
+    "provisioned": "revenue - cashIn"
+  },
+  "results": {
+    "investment": 4293,
+    "totalLeads": 39,
+    "qualifiedCount": 30,
+    "qualificationRate": 76.92307692307693,
+    "totalSales": 3,
+    "revenue": 10400,
+    "cashIn": 7000,
+    "provisioned": 3400,
+    "avgTicket": 3466.6666666666665,
+    "meetingsMarkedCount": 3,
+    "meetingsHeldCount": 0,
+    "meetingsNoShowCount": 0,
+    "totalCalls": 0,
+    "cpl": 110.07692307692308,
+    "costPerQualified": 143.1,
+    "costPerCall": 0,
+    "cac": 1431,
+    "leadToSaleRate": 7.6923076923076925,
+    "callToSaleRate": 0,
+    "leadToCallRate": 0,
+    "callsPerSale": 0,
+    "noShowLeadsCount": 0,
+    "noShowRate": 0,
+    "qualifiedToSaleRate": 10,
+    "avgClosingTime": 8.333333333333334,
+    "roas": 1.6305613789890518,
+    "roiPercent": 63.0561378989052,
+    "salesFromMeetings": 0
+  }
+}
