@@ -258,6 +258,13 @@ export function ReportsDashboard({
   );
 
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
+  const analysisPeriodDays = useMemo(() => {
+    const start = new Date(`${analysisPeriod.start}T00:00:00`);
+    const end = new Date(`${analysisPeriod.end}T23:59:59`);
+    const diffMs = end.getTime() - start.getTime();
+    if (Number.isNaN(diffMs) || diffMs < 0) return 0;
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+  }, [analysisPeriod.start, analysisPeriod.end]);
 
   const metrics = useMemo(() => {
     // Investimento: proporcional no modo range, budget total no modo campanha
@@ -267,6 +274,7 @@ export function ReportsDashboard({
         : selectedCampaign?.budget || 0;
 
     const totalLeads = sourceFilteredLeads.length;
+    const leadsPerDay = analysisPeriodDays > 0 ? totalLeads / analysisPeriodDays : 0;
 
     // Qualificados: leads com tag contendo "QUALIFICADO" (case insensitive)
     const qualifiedLeads = sourceFilteredLeads.filter((lead) =>
@@ -373,10 +381,12 @@ export function ReportsDashboard({
     // ROAS em múltiplo (x) e ROI percentual.
     const roas = investment > 0 ? roasNumerator / investment : 0;
     const roiPercent = investment > 0 ? ((roasNumerator - investment) / investment) * 100 : 0;
+    const roiX = roiPercent / 100;
 
     return {
       investment,
       totalLeads,
+      leadsPerDay,
       qualifiedCount,
       qualificationRate,
       totalSales,
@@ -407,12 +417,14 @@ export function ReportsDashboard({
       qualifiedToSaleRate,
       avgClosingTime,
       roas,
+      roiX,
       roiPercent,
       salesFromMeetings,
     };
   }, [
     sourceFilteredLeads,
     leads,
+    analysisPeriodDays,
     selectedCampaign,
     selectedSourceId,
     leadSourceById,
@@ -581,7 +593,7 @@ export function ReportsDashboard({
     line("CAC", formatCurrency(metrics.cac));
     line("CPL", formatCurrency(metrics.cpl));
     line("ROAS (x)", `${metrics.roas.toFixed(2)}x`);
-    line("ROI (%)", `${metrics.roiPercent.toFixed(1)}%`);
+    line("ROI (x)", `${metrics.roiX.toFixed(2)}x`);
     line("No-show", `${metrics.noShowRate.toFixed(1)}% (${metrics.noShowLeadsCount} leads)`);
 
     y += 4;
@@ -806,7 +818,7 @@ export function ReportsDashboard({
             {/* Bloco 1 — Funil principal */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Funil Principal</p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 <MetricCard title="Total de Leads" icon={Users}
                   sub={`${metrics.totalLeads} leads no período`}>
                   <AnimatedNumber value={metrics.totalLeads} />
@@ -815,8 +827,15 @@ export function ReportsDashboard({
                   sub={<><AnimatedNumber value={metrics.qualificationRate} decimals={1} />% de qualificação</>}>
                   <span className="text-blue-600"><AnimatedNumber value={metrics.qualifiedCount} /></span>
                 </MetricCard>
+                <MetricCard
+                  title="Reuniões Marcadas"
+                  icon={Calendar}
+                  sub="Total de reuniões agendadas da coorte"
+                >
+                  <AnimatedNumber value={metrics.meetingsMarkedCount} />
+                </MetricCard>
                 <MetricCard title="Reuniões Realizadas" icon={Phone}
-                  sub={<><AnimatedNumber value={metrics.leadToCallRate} decimals={1} />% dos leads · {metrics.meetingsMarkedCount} marcadas / {metrics.meetingsNoShowCount} no-show</>}>
+                  sub={<><AnimatedNumber value={metrics.leadToCallRate} decimals={1} />% dos leads · {metrics.meetingsNoShowCount} no-show</>}>
                   <AnimatedNumber value={metrics.meetingsHeldCount} />
                 </MetricCard>
                 <MetricCard title="Vendas" icon={CheckCircle} iconClass="text-green-600"
@@ -910,7 +929,7 @@ export function ReportsDashboard({
             {/* Bloco 3 — Eficiência */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Eficiência</p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
                 <MetricCard title="CPL" icon={DollarSign} sub="Custo por Lead">
                   <AnimatedCurrency value={metrics.cpl} />
                 </MetricCard>
@@ -926,6 +945,9 @@ export function ReportsDashboard({
                 </MetricCard>
                 <MetricCard title="CAC" icon={DollarSign} iconClass="text-red-500" sub="Custo de Aquisição">
                   <span className="text-red-600"><AnimatedCurrency value={metrics.cac} /></span>
+                </MetricCard>
+                <MetricCard title="Leads por dia" icon={Calendar} sub="Média diária no período selecionado">
+                  <AnimatedNumber value={metrics.leadsPerDay} decimals={1} />
                 </MetricCard>
                 <MetricCard title="Tempo p/ Fechar" icon={Clock} sub="Média em dias">
                   <AnimatedNumber value={metrics.avgClosingTime} decimals={1} />
@@ -953,7 +975,7 @@ export function ReportsDashboard({
                   )}
                 </MetricCard>
                 <MetricCard
-                  title="ROI %"
+                  title="ROI (x)"
                   icon={Percent}
                   sub={
                     metrics.roasUsesPeriodCash
@@ -962,8 +984,8 @@ export function ReportsDashboard({
                   }
                 >
                   {metrics.investment > 0 ? (
-                    <span className={metrics.roiPercent >= 0 ? "text-green-600" : "text-red-600"}>
-                      <AnimatedNumber value={metrics.roiPercent} decimals={1} />%
+                    <span className={metrics.roiX >= 0 ? "text-green-600" : "text-red-600"}>
+                      <AnimatedNumber value={metrics.roiX} decimals={2} />x
                     </span>
                   ) : (
                     <span className="text-muted-foreground text-base">N/A</span>
