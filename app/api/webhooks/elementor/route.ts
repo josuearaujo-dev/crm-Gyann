@@ -12,6 +12,14 @@ export async function OPTIONS() {
 }
 
 /**
+ * Normaliza rótulos de campos para comparação (PT/EN).
+ * Ex: "Full Name" → "fullname", "E-mail" → "email", "Phone Number" → "phonenumber"
+ */
+function normalizeFieldKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+/**
  * Extrai os campos do formulário Elementor do body.
  * O Elementor envia campos no formato:
  *   fields[name][value] = "João"
@@ -20,6 +28,9 @@ export async function OPTIONS() {
  *   fields[email][title] = "E-mail"
  *   fields[field_6345493][value] = "85981461450"
  *   fields[field_6345493][title] = "Telephone"
+ *
+ * Também aceita chaves diretas do n8n com rótulos BR ou USA:
+ *   "Nome" / "Full Name", "E-mail" / "Email Address", "Telefone" / "Phone Number"
  */
 function extractElementorFields(body: Record<string, string>) {
   let name: string | null = null;
@@ -33,38 +44,75 @@ function extractElementorFields(body: Record<string, string>) {
   console.log("[v0] Extracting from body with keys:", Object.keys(body));
 
   // FORMATO 1: Chaves diretas (formato do WordPress via n8n)
-  // Procura por chaves como "Name", "E-mail", "Telephone", "Company Name"
+  // Aceita rótulos BR (Nome, E-mail) e USA (Full Name, Email Address)
   for (const [key, value] of Object.entries(body)) {
     const keyLower = key.toLowerCase();
+    const keyNorm = normalizeFieldKey(key);
     const val = String(value).trim();
     
     if (!val) continue;
 
-    // EMAIL
-    if (keyLower === "e-mail" || keyLower === "email") {
+    // EMAIL — "email", "e-mail", "Email Address", etc.
+    if (
+      keyNorm === "email" ||
+      keyNorm === "emailaddress" ||
+      keyNorm === "mail"
+    ) {
       email = val;
       console.log("[v0] Found EMAIL (direct):", val);
       continue;
     }
 
-    // TELEFONE
-    if (keyLower === "telephone" || keyLower === "phone" || keyLower === "telefone" || keyLower.includes("whatsapp")) {
+    // TELEFONE — "phone", "Phone Number", "telephone", "telefone", "whatsapp"
+    if (
+      keyNorm === "telephone" ||
+      keyNorm === "phone" ||
+      keyNorm === "telefone" ||
+      keyNorm === "phonenumber" ||
+      keyNorm === "tel" ||
+      keyNorm === "cellphone" ||
+      keyNorm === "mobile" ||
+      keyNorm.includes("whatsapp")
+    ) {
       phone = val;
       console.log("[v0] Found PHONE (direct):", val);
       continue;
     }
 
     // EMPRESA (verificar ANTES de name!)
-    if (keyLower === "company name" || keyLower === "nome da empresa" || keyLower === "company" || keyLower === "empresa") {
+    if (
+      keyNorm === "companyname" ||
+      keyNorm === "nomedaempresa" ||
+      keyNorm === "company" ||
+      keyNorm === "empresa" ||
+      keyNorm === "businessname"
+    ) {
       company = val;
       console.log("[v0] Found COMPANY (direct):", val);
       continue;
     }
 
-    // NOME (só se não contiver "company")
-    if ((keyLower === "name" || keyLower === "nome") && !keyLower.includes("company") && !keyLower.includes("empresa")) {
-      name = val;
-      console.log("[v0] Found NAME (direct):", val);
+    // NOME — "name", "nome", "Full Name", "Your Name", etc. (sem company/empresa)
+    if (
+      !keyNorm.includes("company") &&
+      !keyNorm.includes("empresa") &&
+      (keyNorm === "name" ||
+        keyNorm === "nome" ||
+        keyNorm === "fullname" ||
+        keyNorm === "yourname" ||
+        keyNorm === "firstname" ||
+        keyNorm === "lastname" ||
+        keyNorm === "contactname")
+    ) {
+      // Se já temos first/last separados, combina; senão sobrescreve
+      if (keyNorm === "lastname" && name) {
+        name = `${name} ${val}`.trim();
+      } else if (keyNorm === "firstname" && name && !name.includes(val)) {
+        name = `${val} ${name}`.trim();
+      } else if (!name || keyNorm !== "lastname") {
+        name = val;
+      }
+      console.log("[v0] Found NAME (direct):", name);
       continue;
     }
 
@@ -112,27 +160,60 @@ function extractElementorFields(body: Record<string, string>) {
 
     for (const field of fields) {
       const titleLower = field.title.toLowerCase();
+      const titleNorm = normalizeFieldKey(field.title);
       const idLower = field.id.toLowerCase();
+      const idNorm = normalizeFieldKey(field.id);
 
-      if (!email && (field.type === "email" || titleLower.includes("email") || idLower === "email")) {
+      if (
+        !email &&
+        (field.type === "email" ||
+          titleNorm.includes("email") ||
+          idNorm === "email" ||
+          idNorm === "emailaddress")
+      ) {
         email = field.value;
         console.log("[v0] Found EMAIL (nested):", field.value);
         continue;
       }
 
-      if (!phone && (field.type === "tel" || titleLower.includes("phone") || titleLower.includes("tel"))) {
+      if (
+        !phone &&
+        (field.type === "tel" ||
+          titleNorm.includes("phone") ||
+          titleNorm.includes("tel") ||
+          titleNorm.includes("whatsapp") ||
+          idNorm.includes("phone") ||
+          idNorm.includes("tel"))
+      ) {
         phone = field.value;
         console.log("[v0] Found PHONE (nested):", field.value);
         continue;
       }
 
-      if (!company && (titleLower.includes("company") || titleLower.includes("empresa"))) {
+      if (
+        !company &&
+        (titleNorm.includes("company") ||
+          titleNorm.includes("empresa") ||
+          idNorm.includes("company"))
+      ) {
         company = field.value;
         console.log("[v0] Found COMPANY (nested):", field.value);
         continue;
       }
 
-      if (!name && (idLower === "name" || titleLower === "name") && !titleLower.includes("company")) {
+      if (
+        !name &&
+        !titleNorm.includes("company") &&
+        !titleNorm.includes("empresa") &&
+        (idNorm === "name" ||
+          titleNorm === "name" ||
+          titleNorm === "nome" ||
+          titleNorm === "fullname" ||
+          titleNorm === "yourname" ||
+          titleNorm.includes("fullname") ||
+          titleLower === "name" ||
+          titleLower === "nome")
+      ) {
         name = field.value;
         console.log("[v0] Found NAME (nested):", field.value);
         continue;
