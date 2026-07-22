@@ -36,7 +36,9 @@ import {
   Trash2,
   ExternalLink,
   CheckCircle,
+  ScrollText,
 } from "lucide-react";
+import Link from "next/link";
 import type { LeadSource, PipelineColumn } from "@/lib/types";
 
 interface WebhooksManagerProps {
@@ -126,13 +128,20 @@ export function WebhooksManager({
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Webhooks</h1>
           <p className="text-muted-foreground mt-1">
             Gerencie suas fontes de leads e webhooks
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/dashboard/webhook-logs">
+              <ScrollText className="w-4 h-4 mr-2" />
+              Ver logs
+            </Link>
+          </Button>
         <Dialog open={isCreating} onOpenChange={setIsCreating}>
           <DialogTrigger asChild>
             <Button>
@@ -179,6 +188,7 @@ export function WebhooksManager({
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

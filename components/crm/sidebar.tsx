@@ -22,6 +22,7 @@ import {
   Users,
   Upload,
   CheckSquare,
+  ScrollText,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { createClient } from "@/lib/supabase/client";
@@ -38,6 +39,7 @@ const navItems = [
   { href: "/dashboard/analytics", label: "Dashboard", icon: BarChart3 },
   { href: "/dashboard/reports", label: "Relatorios", icon: FileText },
   { href: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
+  { href: "/dashboard/webhook-logs", label: "Logs Webhook", icon: ScrollText },
   { href: "/dashboard/settings", label: "Configurações", icon: Settings },
 ];
 
