@@ -429,18 +429,43 @@ async function respond(
       queryParams[key] = value;
     });
 
-    await supabase.from("webhook_logs").insert({
+    const logPayload = {
       source_id: sourceId,
       method: request.method,
       url: request.url,
       headers,
       query_params: queryParams,
       body,
-      ip_address: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || null,
+      ip_address:
+        request.headers.get("x-forwarded-for") ||
+        request.headers.get("x-real-ip") ||
+        null,
       user_agent: request.headers.get("user-agent") || null,
       status_code: statusCode,
       response,
-    });
+    };
+
+    // supabase-js não lança em erro de insert — precisa checar `error`
+    let { error: logError } = await supabase
+      .from("webhook_logs")
+      .insert(logPayload);
+
+    // Se source_id inválido (FK), grava mesmo assim sem source para não perder o log
+    if (logError && sourceId) {
+      console.error(
+        "[v0] webhook_logs insert failed, retrying without source_id:",
+        logError.message,
+        logError.code,
+      );
+      ({ error: logError } = await supabase.from("webhook_logs").insert({
+        ...logPayload,
+        source_id: null,
+      }));
+    }
+
+    if (logError) {
+      console.error("[v0] Failed to save webhook log:", logError);
+    }
   } catch (logErr) {
     console.error("[v0] Failed to save webhook log:", logErr);
   }
