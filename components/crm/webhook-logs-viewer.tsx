@@ -69,52 +69,177 @@ function isSuccessResponse(response: any): boolean | null {
   return null;
 }
 
-function summarizeBodyFields(body: any): { label: string; value: string }[] {
-  if (!body || typeof body !== "object" || Array.isArray(body)) return [];
+type ParsedField = { label: string; value: string; id?: string };
 
-  const entries = Object.entries(body as Record<string, unknown>);
-  const interesting: { label: string; value: string }[] = [];
-  const seen = new Set<string>();
+type ParsedWebhookBody = {
+  formName: string | null;
+  formId: string | null;
+  fields: ParsedField[];
+  meta: ParsedField[];
+  utms: ParsedField[];
+  pageUrl: string | null;
+};
 
-  const pushIf = (label: string, keyNorm: string, rawKey: string, value: unknown) => {
-    if (seen.has(label)) return;
-    const val = String(value ?? "").trim();
-    if (!val) return;
-    if (
-      keyNorm === label.toLowerCase().replace(/[^a-z]/g, "") ||
-      keyNorm.includes(label.toLowerCase().replace(/[^a-z]/g, ""))
-    ) {
-      interesting.push({ label: rawKey, value: val });
-      seen.add(label);
-    }
+function extractUtmsFromUrl(url: string | null): ParsedField[] {
+  if (!url) return [];
+  try {
+    const parsed = new URL(url);
+    const keys = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_content",
+      "utm_term",
+      "utm_id",
+    ];
+    return keys
+      .map((key) => {
+        const value = parsed.searchParams.get(key);
+        if (!value) return null;
+        return { label: key, value: decodeURIComponent(value.replace(/\+/g, " ")) };
+      })
+      .filter((item): item is ParsedField => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+/** Transforma o payload bruto do Elementor/n8n em campos legíveis. */
+function parseWebhookBody(body: any): ParsedWebhookBody {
+  const empty: ParsedWebhookBody = {
+    formName: null,
+    formId: null,
+    fields: [],
+    meta: [],
+    utms: [],
+    pageUrl: null,
   };
 
-  for (const [key, value] of entries) {
-    const keyNorm = key.toLowerCase().replace(/[^a-z]/g, "");
-    pushIf("name", keyNorm, key, value);
-    pushIf("nome", keyNorm, key, value);
-    pushIf("fullname", keyNorm, key, value);
-    pushIf("email", keyNorm, key, value);
-    pushIf("phone", keyNorm, key, value);
-    pushIf("telefone", keyNorm, key, value);
-    pushIf("telephone", keyNorm, key, value);
-    pushIf("company", keyNorm, key, value);
-    pushIf("empresa", keyNorm, key, value);
-  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return empty;
 
-  // Fallback: primeiros campos com valor (exceto meta/headers)
-  if (interesting.length === 0) {
-    for (const [key, value] of entries.slice(0, 8)) {
-      const val = String(value ?? "").trim();
-      if (!val || key.toLowerCase().startsWith("fields[")) continue;
-      interesting.push({
-        label: key,
-        value: val.length > 80 ? `${val.slice(0, 80)}…` : val,
-      });
+  const record = body as Record<string, unknown>;
+  const formName = record["form[name]"] ? String(record["form[name]"]) : null;
+  const formId = record["form[id]"] ? String(record["form[id]"]) : null;
+
+  // Formato Elementor: fields[id][title] / fields[id][value]
+  const fieldMap = new Map<string, { title?: string; value?: string; type?: string }>();
+  const metaMap = new Map<string, { title?: string; value?: string }>();
+
+  for (const [key, raw] of Object.entries(record)) {
+    const fieldMatch = key.match(/^fields\[([^\]]+)\]\[(title|value|type|id)\]$/);
+    if (fieldMatch) {
+      const [, id, prop] = fieldMatch;
+      const current = fieldMap.get(id) || {};
+      if (prop === "title") current.title = String(raw ?? "");
+      if (prop === "value") current.value = String(raw ?? "");
+      if (prop === "type") current.type = String(raw ?? "");
+      fieldMap.set(id, current);
+      continue;
+    }
+
+    const metaMatch = key.match(/^meta\[([^\]]+)\]\[(title|value)\]$/);
+    if (metaMatch) {
+      const [, id, prop] = metaMatch;
+      const current = metaMap.get(id) || {};
+      if (prop === "title") current.title = String(raw ?? "");
+      if (prop === "value") current.value = String(raw ?? "");
+      metaMap.set(id, current);
     }
   }
 
-  return interesting;
+  let fields: ParsedField[] = Array.from(fieldMap.entries())
+    .map(([id, data]) => ({
+      id,
+      label: data.title?.trim() || id,
+      value: (data.value ?? "").trim(),
+    }))
+    .filter((f) => f.value);
+
+  const meta: ParsedField[] = Array.from(metaMap.entries())
+    .map(([id, data]) => ({
+      id,
+      label: data.title?.trim() || id,
+      value: (data.value ?? "").trim(),
+    }))
+    .filter((m) => m.value);
+
+  // Formato direto (n8n flattened): Name / E-mail / Telephone
+  if (fields.length === 0) {
+    const skip = new Set([
+      "form_id",
+      "form_name",
+      "form[id]",
+      "form[name]",
+      "headers",
+      "query_params",
+    ]);
+    for (const [key, raw] of Object.entries(record)) {
+      if (skip.has(key) || key.startsWith("fields[") || key.startsWith("meta[")) {
+        continue;
+      }
+      const value = String(raw ?? "").trim();
+      if (!value) continue;
+      fields.push({ label: key, value });
+    }
+  }
+
+  const pageUrl =
+    meta.find((m) => m.id === "page_url" || /url/i.test(m.label))?.value ||
+    (typeof record.page_url === "string" ? record.page_url : null);
+
+  return {
+    formName,
+    formId,
+    fields,
+    meta,
+    utms: extractUtmsFromUrl(pageUrl),
+    pageUrl,
+  };
+}
+
+function summarizeBodyFields(body: any): { label: string; value: string }[] {
+  const parsed = parseWebhookBody(body);
+  if (parsed.fields.length > 0) {
+    return parsed.fields.map((f) => ({
+      label: f.label,
+      value: f.value.length > 60 ? `${f.value.slice(0, 60)}…` : f.value,
+    }));
+  }
+  return [];
+}
+
+function FieldTable({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ParsedField[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-foreground mb-2">{title}</h4>
+      <div className="rounded-lg border border-border overflow-hidden">
+        <table className="w-full text-sm">
+          <tbody>
+            {rows.map((row) => (
+              <tr
+                key={`${row.label}-${row.id || row.value}`}
+                className="border-b border-border last:border-0"
+              >
+                <td className="align-top px-3 py-2 w-[38%] text-muted-foreground bg-muted/40">
+                  {row.label}
+                </td>
+                <td className="align-top px-3 py-2 text-foreground break-all">
+                  {row.value}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps) {
@@ -322,6 +447,7 @@ export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps
               log.response?.details ||
               (success === false ? "Falha ao processar" : null);
             const leadId = log.response?.lead_id || log.response?.lead?.id;
+            const parsed = parseWebhookBody(log.body);
 
             return (
               <Card key={log.id} className="border-border/50">
@@ -373,6 +499,9 @@ export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps
                               {log.lead_sources.name}
                             </Badge>
                           )}
+                          {parsed.formName && (
+                            <Badge variant="outline">{parsed.formName}</Badge>
+                          )}
                           <span className="text-xs text-muted-foreground">
                             {formatInAppTimezone(log.created_at, {
                               month: "short",
@@ -385,21 +514,24 @@ export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps
                           </span>
                         </div>
 
-                        <p className="text-sm text-foreground font-mono truncate">
-                          {log.url}
-                        </p>
-
-                        {bodySummary.length > 0 && (
-                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        {bodySummary.length > 0 ? (
+                          <div className="mt-1 space-y-0.5">
                             {bodySummary.slice(0, 4).map((f) => (
-                              <span key={f.label}>
-                                <span className="text-foreground/70">
+                              <p
+                                key={f.label}
+                                className="text-sm text-foreground truncate"
+                              >
+                                <span className="text-muted-foreground">
                                   {f.label}:
                                 </span>{" "}
                                 {f.value}
-                              </span>
+                              </p>
                             ))}
                           </div>
+                        ) : (
+                          <p className="text-sm text-foreground font-mono truncate">
+                            {log.url}
+                          </p>
                         )}
 
                         {success === false && responseError && (
@@ -421,64 +553,63 @@ export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps
 
                   {expandedLog === log.id && (
                     <div className="mt-4 space-y-4 pl-0 sm:pl-12">
-                      {Object.keys(log.query_params || {}).length > 0 && (
+                      {(parsed.formName || parsed.formId) && (
+                        <div className="text-sm text-muted-foreground">
+                          {parsed.formName && (
+                            <p>
+                              Formulário:{" "}
+                              <span className="text-foreground font-medium">
+                                {parsed.formName}
+                              </span>
+                              {parsed.formId ? ` (${parsed.formId})` : ""}
+                            </p>
+                          )}
+                          {leadId && (
+                            <p className="mt-1">
+                              Resultado CRM:{" "}
+                              <span className="text-foreground font-medium">
+                                {success === true
+                                  ? "Lead criado"
+                                  : success === false
+                                    ? "Erro"
+                                    : "—"}
+                              </span>
+                              {leadId ? ` · ${leadId}` : ""}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      <FieldTable
+                        title="Campos do formulário"
+                        rows={parsed.fields}
+                      />
+                      <FieldTable title="Campanha (UTM)" rows={parsed.utms} />
+                      <FieldTable
+                        title="Metadados"
+                        rows={parsed.meta.filter(
+                          (m) =>
+                            m.id !== "user_agent" &&
+                            m.id !== "credit" &&
+                            !/agente de usu/i.test(m.label)
+                        )}
+                      />
+
+                      {parsed.pageUrl && (
                         <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="text-sm font-semibold text-foreground">
-                              Query Parameters
-                            </h4>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                copyJson(`${log.id}-query`, log.query_params);
-                              }}
-                            >
-                              {copiedId === `${log.id}-query` ? (
-                                <Check className="w-3.5 h-3.5" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </Button>
-                          </div>
-                          <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto">
-                            {JSON.stringify(log.query_params, null, 2)}
-                          </pre>
+                          <h4 className="text-sm font-semibold text-foreground mb-2">
+                            URL da página
+                          </h4>
+                          <p className="text-xs text-muted-foreground break-all bg-muted p-3 rounded-lg">
+                            {parsed.pageUrl}
+                          </p>
                         </div>
                       )}
 
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="text-sm font-semibold text-foreground">
-                            Body recebido (payload bruto)
-                          </h4>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyJson(`${log.id}-body`, log.body);
-                            }}
-                          >
-                            {copiedId === `${log.id}-body` ? (
-                              <Check className="w-3.5 h-3.5" />
-                            ) : (
-                              <Copy className="w-3.5 h-3.5" />
-                            )}
-                          </Button>
-                        </div>
-                        <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto max-h-80">
-                          {JSON.stringify(log.body, null, 2)}
-                        </pre>
-                      </div>
-
-                      <div>
-                        <div className="flex items-center justify-between mb-2">
-                          <h4 className="text-sm font-semibold text-foreground">
-                            Response do CRM
+                            Resposta do CRM
                           </h4>
                           <Button
                             variant="ghost"
@@ -496,28 +627,111 @@ export function WebhookLogsViewer({ logs, sources = [] }: WebhookLogsViewerProps
                             )}
                           </Button>
                         </div>
-                        <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto">
-                          {JSON.stringify(log.response, null, 2)}
-                        </pre>
-                      </div>
-
-                      <div>
-                        <h4 className="text-sm font-semibold text-foreground mb-2">
-                          Headers
-                        </h4>
-                        <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto max-h-48">
-                          {JSON.stringify(log.headers, null, 2)}
-                        </pre>
-                      </div>
-
-                      {(log.ip_address || log.user_agent) && (
-                        <div className="text-xs text-muted-foreground space-y-1">
-                          {log.ip_address && <p>IP: {log.ip_address}</p>}
-                          {log.user_agent && (
-                            <p>User Agent: {log.user_agent}</p>
+                        <div className="rounded-lg border border-border overflow-hidden text-sm">
+                          <div className="grid grid-cols-[38%_1fr] border-b border-border">
+                            <div className="px-3 py-2 text-muted-foreground bg-muted/40">
+                              success
+                            </div>
+                            <div className="px-3 py-2">
+                              {String(log.response?.success ?? "—")}
+                            </div>
+                          </div>
+                          {leadId && (
+                            <div className="grid grid-cols-[38%_1fr] border-b border-border">
+                              <div className="px-3 py-2 text-muted-foreground bg-muted/40">
+                                lead_id
+                              </div>
+                              <div className="px-3 py-2 font-mono text-xs break-all">
+                                {leadId}
+                              </div>
+                            </div>
+                          )}
+                          {responseError && (
+                            <div className="grid grid-cols-[38%_1fr]">
+                              <div className="px-3 py-2 text-muted-foreground bg-muted/40">
+                                erro
+                              </div>
+                              <div className="px-3 py-2 text-destructive">
+                                {String(responseError)}
+                              </div>
+                            </div>
                           )}
                         </div>
-                      )}
+                      </div>
+
+                      <details className="group">
+                        <summary className="cursor-pointer text-sm font-semibold text-muted-foreground hover:text-foreground list-none flex items-center gap-2">
+                          <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
+                          Ver JSON bruto / headers
+                        </summary>
+                        <div className="mt-3 space-y-4">
+                          {Object.keys(log.query_params || {}).length > 0 && (
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <h4 className="text-sm font-semibold text-foreground">
+                                  Query Parameters
+                                </h4>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyJson(
+                                      `${log.id}-query`,
+                                      log.query_params
+                                    );
+                                  }}
+                                >
+                                  {copiedId === `${log.id}-query` ? (
+                                    <Check className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </Button>
+                              </div>
+                              <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto">
+                                {JSON.stringify(log.query_params, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <h4 className="text-sm font-semibold text-foreground">
+                                Body bruto
+                              </h4>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  copyJson(`${log.id}-body`, log.body);
+                                }}
+                              >
+                                {copiedId === `${log.id}-body` ? (
+                                  <Check className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </Button>
+                            </div>
+                            <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto max-h-80">
+                              {JSON.stringify(log.body, null, 2)}
+                            </pre>
+                          </div>
+
+                          <div>
+                            <h4 className="text-sm font-semibold text-foreground mb-2">
+                              Headers
+                            </h4>
+                            <pre className="text-xs bg-muted p-3 rounded-lg overflow-x-auto max-h-48">
+                              {JSON.stringify(log.headers, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      </details>
                     </div>
                   )}
                 </CardContent>
