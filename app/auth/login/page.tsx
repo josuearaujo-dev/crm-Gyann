@@ -1,177 +1,292 @@
-"use client";
+"use client"
 
-import React from "react";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Loader2, ArrowRight } from "lucide-react";
-import Image from "next/image";
+import type React from "react"
+
+import { createClient } from "../../../lib/supabase/client"
+import { Button } from "../../../components/ui/button"
+import { Input } from "../../../components/ui/input"
+import { Label } from "../../../components/ui/label"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
+import Image from "next/image"
+
+// Background animado usando apenas CSS (sem Three.js para evitar problemas de compatibilidade)
+function AnimatedBackground() {
+  return (
+    <div className="absolute inset-0 bg-gradient-to-br from-[#174873] via-[#19849c] to-[#30BFBF]">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(255,255,255,0.1),transparent_50%)] animate-pulse" />
+    </div>
+  )
+}
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
-  const supabase = createClient();
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [info, setInfo] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [isResettingPassword, setIsResettingPassword] = useState(false)
+  const [recoverySuccess, setRecoverySuccess] = useState(false)
+  const router = useRouter()
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    setRecoverySuccess(params.get("recovered") === "1")
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+    e.preventDefault()
+    const supabase = createClient()
+    setIsLoading(true)
+    setError(null)
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      setError(error.message);
-      setLoading(false);
-    } else {
-      router.push("/dashboard");
-      router.refresh();
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
+      if (error) throw error
+      router.push("/dashboard")
+    } catch (error: unknown) {
+      setError(error instanceof Error ? error.message : "Erro ao fazer login")
+    } finally {
+      setIsLoading(false)
     }
-  };
+  }
+
+  const handleResetPassword = async () => {
+    if (!email.trim()) {
+      setError("Informe seu e-mail para receber o link de redefinição.")
+      setInfo(null)
+      return
+    }
+
+    const supabase = createClient()
+    setIsResettingPassword(true)
+    setError(null)
+    setInfo(null)
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      })
+      if (error) throw error
+      setInfo("Enviamos um link de redefinição para o seu e-mail.")
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Não foi possível enviar o link de redefinição.")
+    } finally {
+      setIsResettingPassword(false)
+    }
+  }
 
   return (
-    <div className="min-h-screen flex bg-[#0a0a0a]">
-      {/* Left side - Branding */}
-      <div className="hidden lg:flex lg:w-1/2 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-transparent to-transparent" />
-        <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-[#0a0a0a] to-transparent" />
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/30 rounded-full blur-[128px]" />
-        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-primary/20 rounded-full blur-[96px]" />
-        
-        <div className="relative z-10 flex flex-col justify-center items-center p-12 w-full h-full">
-          {/* Large centered logo */}
-          <div className="mb-12">
-            <Image
-              src="/logo-exgrow-full.png"
-              alt="EX GROW"
-              width={320}
-              height={100}
-              className="object-contain"
-              priority
-            />
-          </div>
-          
-          {/* Tagline */}
-          <div className="text-center space-y-4 mb-16">
-            <h1 className="text-4xl xl:text-5xl font-bold text-white leading-tight">
-              The Biggest <span className="text-primary">Gastronomic</span><br />
-              Marketing Experts In The U.S.
-            </h1>
-          </div>
-          
-          {/* Stats */}
-          <div className="flex items-center gap-12">
-            <div className="text-center">
-              <p className="text-4xl font-bold text-primary">EX5</p>
-              <p className="text-white/50 text-sm mt-1">Method</p>
+    <div className="fixed inset-0 w-full h-full overflow-hidden">
+      {/* Background - full screen */}
+      <div className="absolute inset-0">
+        <AnimatedBackground />
+      </div>
+
+      {/* Content - centered card */}
+      <div className="relative z-10 flex h-full w-full items-center justify-center p-4 sm:p-6">
+        {/* Desktop version with two columns */}
+        <div className="hidden md:grid w-full max-w-[56rem] overflow-hidden rounded-3xl bg-white shadow-2xl md:grid-cols-2">
+          {/* Left side - branding */}
+          <div className="relative flex bg-gradient-to-br from-[#174873] to-[#19849c] p-10 text-white">
+            <div className="flex h-full flex-col justify-between">
+              <div>
+                
+
+                <h1 className="mb-5 text-3xl font-bold leading-tight">
+                  Manage Notify integra notificações ao seu ecossistema
+                </h1>
+
+                <p className="text-base text-white/90">
+                  Conecte-se para enviar mensagens WhatsApp, gerenciar templates e monitorar entregas em tempo real.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-white/20 bg-white/10 p-5 backdrop-blur-sm">
+                <p className="text-sm leading-relaxed text-white/90">
+                  O Manage Notify foi criado para simplificar comunicações. Automatize envios, aplique templates
+                  personalizados e entregue mensagens confiáveis aos seus clientes.
+                </p>
+              </div>
             </div>
-            <div className="w-px h-16 bg-white/20" />
-            <div className="text-center">
-              <p className="text-4xl font-bold text-white">+610</p>
-              <p className="text-white/50 text-sm mt-1">Restaurants Validated</p>
+          </div>
+
+          {/* Right side - login form (desktop) */}
+          <div className="flex items-center justify-center bg-white p-10">
+            <div className="w-full max-w-sm">
+              <div className="mb-7">
+                <div className="flex items-start gap-4 mb-3">
+                  <Image
+                    src="/logo-manage-notify.png"
+                    alt="Manage Notify Logo"
+                    width={72}
+                    height={72}
+                    className="flex-shrink-0 object-contain"
+                  />
+                  <div>
+                    <h2 className="text-xl font-normal text-gray-600 leading-tight">Bem-vindo ao</h2>
+                    <h1 className="text-3xl font-bold text-[#174873] leading-tight">Manage Notify</h1>
+                  </div>
+                </div>
+                <p className="text-sm text-gray-600">
+                  Use suas credenciais corporativas para monitorar integrações e gerir suas conexões de dados.
+                </p>
+              </div>
+
+              <form onSubmit={handleLogin}>
+                <div className="flex flex-col gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="email-desktop" className="text-sm font-medium text-gray-700">
+                      E-mail corporativo
+                    </Label>
+                    <Input
+                      id="email-desktop"
+                      type="email"
+                      placeholder="admin@managetour.com"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="h-12 rounded-lg border-gray-200 bg-gray-50 px-4 text-base"
+                    />
+                  </div>
+
+                  <div className="grid gap-2">
+                    <Label htmlFor="password-desktop" className="text-sm font-medium text-gray-700">
+                      Senha
+                    </Label>
+                    <Input
+                      id="password-desktop"
+                      type="password"
+                      placeholder="••••••••••"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="h-12 rounded-lg border-gray-200 bg-gray-50 px-4 text-base"
+                    />
+                  </div>
+
+                  {(recoverySuccess || info) && (
+                    <p className="text-sm text-emerald-700">
+                      {recoverySuccess ? "Senha redefinida com sucesso. Faça login com a nova senha." : info}
+                    </p>
+                  )}
+                  {error && <p className="text-sm text-red-600">{error}</p>}
+
+                  <Button
+                    type="submit"
+                    className="h-12 w-full rounded-lg bg-[#174873] text-base font-medium text-white hover:bg-[#174873]/90"
+                    disabled={isLoading}
+                  >
+                    {isLoading ? "Entrando..." : "Entrar"}
+                  </Button>
+
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 justify-start text-[#174873]"
+                    onClick={handleResetPassword}
+                    disabled={isResettingPassword}
+                  >
+                    {isResettingPassword ? "Enviando link..." : "Redefinir senha"}
+                  </Button>
+                </div>
+
+                
+              </form>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Right side - Login Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 lg:p-12">
-        <div className="w-full max-w-md space-y-8 animate-fade-in">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex justify-center mb-8">
-            <div className="bg-[#1a1a1a] rounded-2xl p-4">
-              <Image
-                src="/logo-exgrow-full.png"
-                alt="EX GROW"
-                width={160}
-                height={50}
-                className="object-contain"
-                priority
-              />
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <h2 className="text-3xl font-bold text-white">Bem-vindo de volta</h2>
-            <p className="text-white/50">Entre na sua conta para continuar</p>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-5">
-            {error && (
-              <div className="p-4 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl animate-scale-in">
-                {error}
+        {/* Mobile version */}
+        <div className="md:hidden w-full max-w-sm">
+          <div className="rounded-2xl bg-white/95 backdrop-blur-sm shadow-2xl p-6">
+            <div className="mb-6">
+              <div className="flex items-start gap-3 mb-2">
+                <Image
+                  src="/logo-manage-notify.png"
+                  alt="Manage Notify Logo"
+                  width={58}
+                  height={58}
+                  className="flex-shrink-0 object-contain"
+                />
+                <div>
+                  <h2 className="text-lg font-normal text-gray-600 leading-tight">Bem-vindo ao</h2>
+                  <h1 className="text-2xl font-bold text-[#174873] leading-tight">Manage Notify</h1>
+                </div>
               </div>
-            )}
-            
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-white/70 text-sm font-medium">
-                Email
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="seu@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-primary focus:ring-primary/20 rounded-xl transition-all"
-              />
-            </div>
-            
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-white/70 text-sm font-medium">
-                Senha
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-primary focus:ring-primary/20 rounded-xl transition-all"
-              />
+              <p className="text-xs text-gray-600">
+                Use suas credenciais corporativas para monitorar integrações e gerir suas conexões de dados.
+              </p>
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-white font-semibold rounded-xl transition-all duration-200 group glow-primary" 
-              disabled={loading}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Entrando...
-                </>
-              ) : (
-                <>
-                  Entrar
-                  <ArrowRight className="ml-2 h-4 w-4 group-hover:translate-x-1 transition-transform" />
-                </>
-              )}
-            </Button>
-          </form>
+            <form onSubmit={handleLogin}>
+              <div className="flex flex-col gap-4">
+                <div className="grid gap-2">
+                  <Label htmlFor="email-mobile" className="text-sm font-medium text-gray-700">
+                    E-mail corporativo
+                  </Label>
+                  <Input
+                    id="email-mobile"
+                    type="email"
+                    placeholder="admin@managetour.com"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="h-12 rounded-lg border-gray-200 bg-gray-50 px-4 text-base"
+                  />
+                </div>
 
-          <p className="text-center text-sm text-white/50">
-            Nao tem uma conta?{" "}
-            <Link
-              href="/auth/signup"
-              className="text-primary hover:text-primary/80 font-medium transition-colors"
-            >
-              Criar conta
-            </Link>
-          </p>
+                <div className="grid gap-2">
+                  <Label htmlFor="password-mobile" className="text-sm font-medium text-gray-700">
+                    Senha
+                  </Label>
+                  <Input
+                    id="password-mobile"
+                    type="password"
+                    placeholder="••••••••••"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="h-12 rounded-lg border-gray-200 bg-gray-50 px-4 text-base"
+                  />
+                </div>
+
+                {(recoverySuccess || info) && (
+                  <p className="text-sm text-emerald-700">
+                    {recoverySuccess ? "Senha redefinida com sucesso. Faça login com a nova senha." : info}
+                  </p>
+                )}
+                {error && <p className="text-sm text-red-600">{error}</p>}
+
+                <Button
+                  type="submit"
+                  className="h-12 w-full rounded-lg bg-[#174873] text-base font-medium text-white hover:bg-[#174873]/90"
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Entrando..." : "Entrar"}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="link"
+                  className="h-auto p-0 justify-start text-[#174873]"
+                  onClick={handleResetPassword}
+                  disabled={isResettingPassword}
+                >
+                  {isResettingPassword ? "Enviando link..." : "Redefinir senha"}
+                </Button>
+              </div>
+
+              
+            </form>
+          </div>
         </div>
       </div>
     </div>
-  );
+  )
 }

@@ -1,36 +1,44 @@
-import React from "react"
-import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import { ThemeProvider } from '@/components/theme-provider'
-import './globals.css'
+import type React from "react"
+import type { Metadata, Viewport } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import "./globals.css"
 
-const _geist = Geist({ subsets: ["latin"] });
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" })
+const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" })
 
 export const metadata: Metadata = {
-  title: 'CRM EX GROW - Gerencie seus leads',
-  description: 'CRM completo com pipeline visual, integracoes com Meta Ads e webhooks personalizados. Gerencie seus leads de forma simples e eficiente.',
+  title: "Manage Notify",
+  description: "Sistema multi-tenant para gerenciamento e envio de notificações via WhatsApp Business API",
+  generator: "v0.app",
   icons: {
-    icon: '/logo-exgrow.png',
-    apple: '/logo-exgrow.png',
+    icon: [
+      {
+        url: "/favicon.png",
+        sizes: "any",
+        type: "image/png",
+      },
+      {
+        url: "/favicon.ico",
+        sizes: "32x32",
+        type: "image/x-icon",
+      },
+    ],
+    apple: [
+      {
+        url: "/apple-icon.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
+    ],
   },
-  openGraph: {
-    title: 'CRM EX GROW - Gerencie seus leads',
-    description: 'CRM completo com pipeline visual, integracoes com Meta Ads e webhooks personalizados.',
-    images: ['/og-image.png'],
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'CRM EX GROW - Gerencie seus leads',
-    description: 'CRM completo com pipeline visual, integracoes com Meta Ads e webhooks personalizados.',
-    images: ['/og-image.png'],
-  },
-    generator: 'v0.app'
 }
 
-export const viewport = {
-  themeColor: '#0a0a0a',
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#174873",
 }
 
 export default function RootLayout({
@@ -39,16 +47,9 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="pt-BR" suppressHydrationWarning>
-      <body className={`font-sans antialiased`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem={false}
-          storageKey="exgrow-theme"
-        >
-          {children}
-        </ThemeProvider>
+    <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} bg-background`}>
+      <body className={`${geistSans.className} antialiased`}>
+        {children}
       </body>
     </html>
   )
