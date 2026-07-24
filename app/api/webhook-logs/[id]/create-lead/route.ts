@@ -76,7 +76,9 @@ export async function POST(
   }
 
   const result = await createLeadFromElementorBody(admin, sourceId, payload, {
+    // Colocar o lead na pipeline de quem está recuperando (visível no board)
     columnId: body.columnId || null,
+    assignedTo: user.id,
     forceDuplicate: Boolean(body.forceDuplicate),
     overrides: body.overrides,
     extraMetadata: {

@@ -365,15 +365,18 @@ export async function createLeadFromElementorBody(
     columnId = null;
   }
 
-  if (!columnId && source.created_by) {
-    const { data: col } = await supabase
+  // Pipeline compartilhada: a maioria das colunas tem created_by = null.
+  // Filtrar por created_by do usuário fazia cair em "Proposta feita" (única do user).
+  // Preferir "Novo Lead" ou a menor position global.
+  if (!columnId) {
+    const { data: novoLeadCol } = await supabase
       .from("pipeline_columns")
       .select("id")
-      .eq("created_by", source.created_by)
+      .ilike("name", "novo lead")
       .order("position", { ascending: true })
       .limit(1)
-      .single();
-    columnId = col?.id || null;
+      .maybeSingle();
+    columnId = novoLeadCol?.id || null;
   }
 
   if (!columnId) {
@@ -381,13 +384,36 @@ export async function createLeadFromElementorBody(
       .from("pipeline_columns")
       .select("id")
       .order("position", { ascending: true })
+      .order("created_at", { ascending: true })
       .limit(1)
-      .single();
+      .maybeSingle();
     columnId = col?.id || null;
   }
 
+  // Sem coluna válida o lead existe mas some da pipeline (board filtra por column_id)
   if (!columnId) {
-    columnId = "87f7c397-8c2d-49ae-838d-d71cc1690c03";
+    return {
+      success: false,
+      error:
+        "Nenhuma coluna de pipeline encontrada. Crie ao menos uma etapa no funil antes de recuperar o lead.",
+      code: "NO_PIPELINE_COLUMN",
+    };
+  }
+
+  // Confirmar que a coluna existe (evita FK inválida / hardcode morto)
+  const { data: columnExists } = await supabase
+    .from("pipeline_columns")
+    .select("id")
+    .eq("id", columnId)
+    .maybeSingle();
+
+  if (!columnExists) {
+    return {
+      success: false,
+      error:
+        "A coluna de pipeline selecionada não existe mais. Atualize o funil e tente novamente.",
+      code: "PIPELINE_COLUMN_NOT_FOUND",
+    };
   }
 
   const metadata: Record<string, unknown> = {
@@ -414,6 +440,9 @@ export async function createLeadFromElementorBody(
     source_id: sourceId,
     column_id: columnId,
     assigned_to: opts.assignedTo ?? source.created_by ?? null,
+    is_finished: false,
+    is_lost: false,
+    excluded_from_reports: false,
   };
 
   if (Object.keys(metadata).length > 0) {
