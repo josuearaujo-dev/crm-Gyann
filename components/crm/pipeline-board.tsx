@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { LeadCard } from "./lead-card";
 import { LeadDetail } from "./lead-detail";
+import { CreateLeadDialog } from "./create-lead-dialog";
 import type { PipelineColumn, Lead, Tag } from "@/lib/types";
 import { getThemeAwareColor } from "@/lib/color-utils";
 import { getWonPipelineColumn } from "@/lib/pipeline-utils";
@@ -353,10 +354,15 @@ export function PipelineBoard({
       patch.won_at = new Date().toISOString();
     }
 
-    const { error } = await supabase
+    let { error } = await supabase
       .from("leads")
       .update(patch)
       .eq("id", draggedLead);
+
+    if (error && patch.won_at && /won_at|column .* does not exist/i.test(error.message || "")) {
+      delete patch.won_at;
+      ({ error } = await supabase.from("leads").update(patch).eq("id", draggedLead));
+    }
     
     if (!error) {
       setLeads(
@@ -370,6 +376,9 @@ export function PipelineBoard({
             : lead
         )
       );
+    } else {
+      console.error("[v0] Error moving lead:", error);
+      alert(`Erro ao mover lead: ${error.message}`);
     }
     setDraggedLead(null);
   };
@@ -488,9 +497,18 @@ export function PipelineBoard({
               Arraste e solte para mover entre etapas
             </p>
           </div>
+          <div className="flex items-center gap-2">
+            <CreateLeadDialog
+              columns={columns}
+              sources={sources}
+              userId={userId}
+              onCreated={() => {
+                handleLeadUpdate();
+              }}
+            />
           <Dialog open={isAddingColumn} onOpenChange={setIsAddingColumn}>
             <DialogTrigger asChild>
-              <Button>
+              <Button variant="outline">
                 <Plus className="w-4 h-4 mr-2" />
                 Nova Coluna
               </Button>
@@ -549,6 +567,7 @@ export function PipelineBoard({
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
       </div>
 

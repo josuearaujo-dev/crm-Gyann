@@ -1,0 +1,21 @@
+Upload manual — Novo Lead (20260911-092745)
+
+Substitua estes arquivos no GitHub (mesmos caminhos):
+
+- components/crm/create-lead-dialog.tsx  (NOVO — criar pasta se precisar)
+- components/crm/pipeline-board.tsx
+- components/crm/leads-table.tsx
+- app/dashboard/leads/page.tsx
+
+O que muda:
+- Botão "Novo Lead" na Pipeline e em Todos os Leads
+- Formulário: nome, e-mail, telefone, empresa, fonte, coluna, segmento, faturamento
+- Coluna padrão: Novo Lead
+
+Como subir:
+1. No GitHub, abra o repositório
+2. Para cada arquivo, faça Upload file / Replace no caminho correspondente
+   OU copie esta pasta por cima do clone local e dê commit/push
+3. Aguarde o redeploy do Vercel
+
+Não precisa de migration SQL para esta alteração.

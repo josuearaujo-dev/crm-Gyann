@@ -52,6 +52,7 @@ export default async function LeadsPage() {
         columns={columns || []}
         sources={sources || []}
         lossReasons={lossReasons || []}
+        userId={user.id}
       />
     </div>
   );

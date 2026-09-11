@@ -35,8 +35,10 @@ import {
 } from "lucide-react";
 import type { Lead, PipelineColumn, LeadSource } from "@/lib/types";
 import { getWonPipelineColumn } from "@/lib/pipeline-utils";
+import { CreateLeadDialog } from "@/components/crm/create-lead-dialog";
 import { format } from "date-fns";
 import { enUS } from "date-fns/locale";
+import { useRouter } from "next/navigation";
 
 interface LossReason {
   id: string;
@@ -52,9 +54,17 @@ interface LeadsTableProps {
   columns: PipelineColumn[];
   sources: LeadSource[];
   lossReasons: LossReason[];
+  userId: string;
 }
 
-export function LeadsTable({ leads, columns, sources, lossReasons }: LeadsTableProps) {
+export function LeadsTable({
+  leads,
+  columns,
+  sources,
+  lossReasons,
+  userId,
+}: LeadsTableProps) {
+  const router = useRouter();
   const [searchTerm, setSearchTerm] = useState("");
   const [filterSource, setFilterSource] = useState<string>("");
   const [filterColumn, setFilterColumn] = useState<string>("");
@@ -168,6 +178,15 @@ export function LeadsTable({ leads, columns, sources, lossReasons }: LeadsTableP
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-end">
+        <CreateLeadDialog
+          columns={columns}
+          sources={sources}
+          userId={userId}
+          onCreated={() => router.refresh()}
+        />
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card>
