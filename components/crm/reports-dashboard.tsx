@@ -43,12 +43,43 @@ import {
   indexInstallmentsByLeadId,
   periodInstallmentMetrics,
 } from "@/lib/report-finance";
+import { summarizeContracts } from "@/lib/contract-value";
 import { CampaignManager, type Campaign } from "./campaign-manager";
 import { formatCurrency } from "@/lib/timezone";
 
+/** Tags reais do CRM: QUAL_QUALIFICADO / QUAL_NAO_QUALIFICADO (type QUALIFICACAO). */
+function leadHasQualifiedTag(
+  lead: { lead_tags?: { tags: { name: string; type?: string | null } }[] }
+): boolean {
+  return Boolean(
+    lead.lead_tags?.some((lt) => {
+      const name = lt.tags.name.toUpperCase();
+      if (name.includes("NAO_QUALIFICADO") || name.includes("NÃO_QUALIFICADO") || name.includes("DESQUALIFICADO")) {
+        return false;
+      }
+      return name.includes("QUAL_QUALIFICADO") || name === "QUALIFICADO" || name.includes("QUALIFICADO");
+    })
+  );
+}
+
+function leadHasDisqualifiedTag(
+  lead: { lead_tags?: { tags: { name: string; type?: string | null } }[] }
+): boolean {
+  return Boolean(
+    lead.lead_tags?.some((lt) => {
+      const name = lt.tags.name.toUpperCase();
+      return (
+        name.includes("NAO_QUALIFICADO") ||
+        name.includes("NÃO_QUALIFICADO") ||
+        name.includes("DESQUALIFICADO")
+      );
+    })
+  );
+}
+
 interface ReportsDashboardProps {
   leads: (Lead & {
-    lead_tags?: { tags: { id: string; name: string; color: string } }[];
+    lead_tags?: { tags: { id: string; name: string; color: string; type?: string | null } }[];
     excluded_from_reports?: boolean | null;
   })[];
   columns: PipelineColumn[];
@@ -129,6 +160,7 @@ export function ReportsDashboard({
 }: ReportsDashboardProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [filterMode, setFilterMode] = useState<"campaign" | "range">("campaign");
+  /** Formulário = fonte do CRM (ex.: Formulario-BR / Formulario-USA). */
   const [selectedSourceId, setSelectedSourceId] = useState<string>("all");
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(
     initialCampaigns.find((c) => {
@@ -247,15 +279,40 @@ export function ReportsDashboard({
     });
   }, [leads, selectedCampaign, filterMode, rangeData]);
 
-  const sourceFilteredLeads = useMemo(() => {
+  /** Contagem de leads por fonte no período — opções do filtro Formulário. */
+  const formSourceOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    let withoutSource = 0;
+    for (const lead of campaignLeads) {
+      if (!lead.source_id) {
+        withoutSource += 1;
+        continue;
+      }
+      counts.set(lead.source_id, (counts.get(lead.source_id) || 0) + 1);
+    }
+
+    const options = sources
+      .map((source) => ({
+        id: source.id,
+        name: source.name,
+        count: counts.get(source.id) || 0,
+      }))
+      .filter((s) => s.count > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
+    if (withoutSource > 0) {
+      options.push({ id: "none", name: "Sem formulário", count: withoutSource });
+    }
+    return options;
+  }, [campaignLeads, sources]);
+
+  const filteredLeads = useMemo(() => {
     if (selectedSourceId === "all") return campaignLeads;
+    if (selectedSourceId === "none") {
+      return campaignLeads.filter((lead) => !lead.source_id);
+    }
     return campaignLeads.filter((lead) => lead.source_id === selectedSourceId);
   }, [campaignLeads, selectedSourceId]);
-
-  const leadSourceById = useMemo(
-    () => new Map(leads.map((lead) => [lead.id, lead.source_id])),
-    [leads]
-  );
 
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
   const analysisPeriodDays = useMemo(() => {
@@ -273,20 +330,16 @@ export function ReportsDashboard({
         ? rangeData?.totalInvestment || 0
         : selectedCampaign?.budget || 0;
 
-    const totalLeads = sourceFilteredLeads.length;
+    const totalLeads = filteredLeads.length;
     const leadsPerDay = analysisPeriodDays > 0 ? totalLeads / analysisPeriodDays : 0;
 
-    // Qualificados: leads com tag contendo "QUALIFICADO" (case insensitive)
-    const qualifiedLeads = sourceFilteredLeads.filter((lead) =>
-      lead.lead_tags?.some((lt) =>
-        lt.tags.name.toUpperCase().includes("QUALIFICADO")
-      )
-    );
-    const qualifiedCount = qualifiedLeads.length;
+    const qualifiedCount = filteredLeads.filter(leadHasQualifiedTag).length;
+    const disqualifiedCount = filteredLeads.filter(leadHasDisqualifiedTag).length;
     const qualificationRate = totalLeads > 0 ? (qualifiedCount / totalLeads) * 100 : 0;
+    const disqualificationRate = totalLeads > 0 ? (disqualifiedCount / totalLeads) * 100 : 0;
 
     // Regra temporal padronizada: relatório por coorte (leads criados no período selecionado).
-    const cohortWonLeads = sourceFilteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
+    const cohortWonLeads = filteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
 
     // Vendas válidas: ganhos da própria coorte.
     const salesLeads = cohortWonLeads;
@@ -302,19 +355,16 @@ export function ReportsDashboard({
       analysisPeriod.end
     );
     const showPeriodInstallmentBreakdown = totalSales === 0 || salesWithInstallmentSchedule > 0;
-    const roasNumerator =
-      totalSales > 0 && salesWithInstallmentSchedule > 0 ? cashInPeriod : totalReceivedCohort;
+    // ROAS/ROI de aquisição: sempre total já recebido da coorte (caixa do período é métrica à parte).
+    const roasNumerator = totalReceivedCohort;
     const avgTicket = totalSales > 0 ? revenue / totalSales : 0;
+    const contractSummary = summarizeContracts(salesLeads);
 
-    // Reuniões da coorte: separa marcada, realizada e no-show.
-    const cohortLeadIds = new Set(sourceFilteredLeads.map((l) => l.id));
+    // Reuniões da coorte (já filtrada por formulário/fonte).
+    const cohortLeadIds = new Set(filteredLeads.map((l) => l.id));
     const meetingsForCohort = meetings.filter((m) => {
       if (m.status === "cancelled") return false;
-      const forCohortLead = m.lead_id != null && cohortLeadIds.has(m.lead_id);
-      const sourceMatches =
-        selectedSourceId === "all" ||
-        (m.lead_id != null && leadSourceById.get(m.lead_id) === selectedSourceId);
-      return sourceMatches && forCohortLead;
+      return m.lead_id != null && cohortLeadIds.has(m.lead_id);
     });
 
     const meetingsMarkedCount = meetingsForCohort.length;
@@ -323,55 +373,71 @@ export function ReportsDashboard({
     const meetingsNoShow = meetingsForCohort.filter((m) => m.status === "no_show");
     const meetingsNoShowCount = meetingsNoShow.length;
     const totalCalls = meetingsHeldCount;
-    const leadsWithMeetingIds = new Set(
+    const leadsWithMarkedMeeting = new Set(
       meetingsForCohort
         .map((m) => m.lead_id)
         .filter((id): id is string => Boolean(id))
     );
+    const uniqueLeadsWithMarkedMeeting = leadsWithMarkedMeeting.size;
     const noShowLeadIds = new Set(
       meetingsNoShow
         .filter((m) => m.lead_id)
         .map((m) => m.lead_id as string)
     );
     const noShowLeadsCount = noShowLeadIds.size;
+    // No-show % = leads com no-show ÷ leads com alguma reunião marcada
     const noShowRate =
-      leadsWithMeetingIds.size > 0 ? (noShowLeadsCount / leadsWithMeetingIds.size) * 100 : 0;
+      uniqueLeadsWithMarkedMeeting > 0
+        ? (noShowLeadsCount / uniqueLeadsWithMarkedMeeting) * 100
+        : 0;
 
     const leadsWithHeldMeeting = new Set(
       meetingsHeld.map((m) => m.lead_id).filter((id): id is string => Boolean(id))
     );
-    const salesFromMeetings = salesLeads.filter((lead) => {
-      if (!leadsWithHeldMeeting.has(lead.id)) return false;
-      // Proxy de data de fechamento: updated_at do lead ao entrar em ganho.
-      const wonAt = new Date(lead.updated_at).getTime();
-      return meetingsHeld.some((m) => {
+    const uniqueLeadsWithHeldMeeting = leadsWithHeldMeeting.size;
+    const closedAtMs = (lead: Lead) =>
+      new Date(lead.won_at || lead.updated_at).getTime();
+
+    const salesFromMarkedMeetings = salesLeads.filter((lead) => {
+      if (!leadsWithMarkedMeeting.has(lead.id)) return false;
+      const wonAt = closedAtMs(lead);
+      return meetingsForCohort.some((m) => {
         if (m.lead_id !== lead.id) return false;
-        const heldAt = new Date(m.scheduled_at).getTime();
-        return heldAt <= wonAt;
+        return new Date(m.scheduled_at).getTime() <= wonAt;
       });
     }).length;
+
+    // % do funil
+    const leadToMarkedMeetingRate =
+      totalLeads > 0 ? (uniqueLeadsWithMarkedMeeting / totalLeads) * 100 : 0;
+    const markedToHeldRate =
+      meetingsMarkedCount > 0 ? (meetingsHeldCount / meetingsMarkedCount) * 100 : null;
+    const heldMeetingLeadRate =
+      totalLeads > 0 ? (uniqueLeadsWithHeldMeeting / totalLeads) * 100 : 0;
+
     // Métricas de custo
     const cpl = totalLeads > 0 && investment > 0 ? investment / totalLeads : 0;
     const costPerQualified = qualifiedCount > 0 && investment > 0 ? investment / qualifiedCount : 0;
     const costPerCall = totalCalls > 0 && investment > 0 ? investment / totalCalls : null;
     const cac = totalSales > 0 && investment > 0 ? investment / totalSales : 0;
 
-    // Taxas de conversão
-    const leadToSaleRate =
-      totalLeads > 0 ? (cohortWonLeads.length / totalLeads) * 100 : 0;
-    const callToSaleRate =
-      meetingsHeldCount > 0 ? (salesFromMeetings / meetingsHeldCount) * 100 : null;
-    const leadToCallRate = totalLeads > 0 ? (meetingsHeldCount / totalLeads) * 100 : 0;
-    const callsPerSale =
-      totalSales > 0 ? meetingsHeldCount / totalSales : null;
+    // 3 taxas de conversão pedidas pelo cliente
+    const leadToSaleRate = totalLeads > 0 ? (totalSales / totalLeads) * 100 : 0;
     const qualifiedToSaleRate =
       qualifiedCount > 0 ? (totalSales / qualifiedCount) * 100 : 0;
+    const markedMeetingToSaleRate =
+      uniqueLeadsWithMarkedMeeting > 0
+        ? (salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting) * 100
+        : null;
+
+    const callsPerSale =
+      totalSales > 0 ? meetingsHeldCount / totalSales : null;
 
     const avgClosingTime =
       salesLeads.length > 0
         ? salesLeads.reduce((sum, l) => {
             const days = Math.floor(
-              (new Date(l.updated_at).getTime() - new Date(l.created_at).getTime()) /
+              (closedAtMs(l) - new Date(l.created_at).getTime()) /
                 (1000 * 60 * 60 * 24)
             );
             return sum + Math.max(days, 0);
@@ -381,14 +447,15 @@ export function ReportsDashboard({
     // ROAS em múltiplo (x) e ROI percentual.
     const roas = investment > 0 ? roasNumerator / investment : 0;
     const roiPercent = investment > 0 ? ((roasNumerator - investment) / investment) * 100 : 0;
-    const roiX = roiPercent / 100;
 
     return {
       investment,
       totalLeads,
       leadsPerDay,
       qualifiedCount,
+      disqualifiedCount,
       qualificationRate,
+      disqualificationRate,
       totalSales,
       revenue,
       totalReceivedCohort,
@@ -398,36 +465,38 @@ export function ReportsDashboard({
       openInPeriod,
       showPeriodInstallmentBreakdown,
       salesWithInstallmentSchedule,
-      roasUsesPeriodCash: totalSales > 0 && salesWithInstallmentSchedule > 0,
       avgTicket,
+      ...contractSummary,
       meetingsMarkedCount,
       meetingsHeldCount,
       meetingsNoShowCount,
+      uniqueLeadsWithMarkedMeeting,
+      uniqueLeadsWithHeldMeeting,
       totalCalls,
       cpl,
       costPerQualified,
       costPerCall,
       cac,
       leadToSaleRate,
-      callToSaleRate,
-      leadToCallRate,
+      qualifiedToSaleRate,
+      markedMeetingToSaleRate,
+      leadToMarkedMeetingRate,
+      markedToHeldRate,
+      heldMeetingLeadRate,
       callsPerSale,
       noShowLeadsCount,
       noShowRate,
-      qualifiedToSaleRate,
       avgClosingTime,
       roas,
-      roiX,
       roiPercent,
-      salesFromMeetings,
+      salesFromMarkedMeetings,
     };
   }, [
-    sourceFilteredLeads,
-    leads,
+    filterMode,
+    rangeData,
+    filteredLeads,
     analysisPeriodDays,
     selectedCampaign,
-    selectedSourceId,
-    leadSourceById,
     wonColumn,
     meetings,
     installments,
@@ -440,21 +509,21 @@ export function ReportsDashboard({
     return columns
       .map((col) => ({
         name: col.name,
-        leads: sourceFilteredLeads.filter((l) => l.column_id === col.id).length,
+        leads: filteredLeads.filter((l) => l.column_id === col.id).length,
         color: col.color,
       }))
       .filter((d) => d.leads > 0);
-  }, [sourceFilteredLeads, columns]);
+  }, [filteredLeads, columns]);
 
   // Gráfico: leads por fonte
   const sourceData = useMemo(() => {
     return sources
       .map((source) => ({
         name: source.name,
-        value: sourceFilteredLeads.filter((l) => l.source_id === source.id).length,
+        value: filteredLeads.filter((l) => l.source_id === source.id).length,
       }))
       .filter((d) => d.value > 0);
-  }, [sourceFilteredLeads, sources]);
+  }, [filteredLeads, sources]);
   const sourceDataSorted = useMemo(
     () => [...sourceData].sort((a, b) => b.value - a.value),
     [sourceData]
@@ -467,10 +536,12 @@ export function ReportsDashboard({
       })()
     : false;
 
-  const selectedSourceName =
+  const selectedFormName =
     selectedSourceId === "all"
-      ? "Todas as fontes"
-      : sources.find((s) => s.id === selectedSourceId)?.name || "Fonte desconhecida";
+      ? "Todos os formulários"
+      : selectedSourceId === "none"
+        ? "Sem formulário"
+        : sources.find((s) => s.id === selectedSourceId)?.name || "Formulário";
 
   const reportLog = useMemo(() => {
     const nowIso = new Date().toISOString();
@@ -487,13 +558,13 @@ export function ReportsDashboard({
         mode: filterMode,
         campaignId: selectedCampaign?.id || null,
         campaignName: selectedCampaign?.name || null,
-        sourceId: selectedSourceId,
-        sourceName: selectedSourceName,
+        formSourceId: selectedSourceId,
+        formName: selectedFormName,
         period: periodLabel,
       },
       dataUsed: {
         totalLeadsLoaded: leads.length,
-        leadsAfterPeriodAndSource: sourceFilteredLeads.length,
+        leadsAfterFilters: filteredLeads.length,
         meetingsLoaded: meetings.length,
         installmentsLoaded: installments.length,
         wonColumnId: wonColumn?.id || null,
@@ -501,28 +572,30 @@ export function ReportsDashboard({
         analysisPeriod,
       },
       formulas: {
-        leadToSaleRate: "cohortWonLeads / totalLeads * 100",
+        leadToSaleRate: "totalSales / totalLeads * 100",
         qualifiedToSaleRate: "totalSales / qualifiedCount * 100",
-        leadToMeetingRate: "meetingsHeldCount / totalLeads * 100",
-        meetingToSaleRate: "salesFromMeetings / meetingsHeldCount * 100",
+        markedMeetingToSaleRate: "salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting * 100",
+        leadToMarkedMeetingRate: "uniqueLeadsWithMarkedMeeting / totalLeads * 100",
+        markedToHeldRate: "meetingsHeldCount / meetingsMarkedCount * 100",
+        noShowRate: "noShowLeadsCount / uniqueLeadsWithMarkedMeeting * 100",
         meetingsPerSale: "meetingsHeldCount / totalSales",
         cpl: "investment / totalLeads",
         cac: "investment / totalSales",
-        revenue: "sum(deal_value) vendas da coorte",
+        totalTcv: "sum(deal_value) vendas da coorte",
+        totalMrr: "sum(mrr_value ou deal_value/meses) vendas da coorte",
+        avgTcvTicket: "totalTcv / contractsSold",
+        avgMrrTicket: "totalMrr / contractsSold",
         totalReceivedCohort:
           "por venda: se há parcelas → soma(amount) com paid_at; senão legado (integral ou amount_received)",
         outstandingCohort: "revenue - totalReceivedCohort",
         cashInPeriod: "soma parcelas com paid_at dentro da janela (campanha ou range)",
         expectedInPeriod: "soma parcelas com due_date dentro da janela",
         openInPeriod: "parcelas com due_date na janela e paid_at nulo",
-        roasX:
-          metrics.roasUsesPeriodCash
-            ? "cashInPeriod / investment"
-            : "totalReceivedCohort / investment (sem grade de parcelas nas vendas)",
-        roiPercent:
-          metrics.roasUsesPeriodCash
-            ? "(cashInPeriod - investment) / investment * 100"
-            : "(totalReceivedCohort - investment) / investment * 100",
+        avgClosingTime: "média (won_at || updated_at) - created_at em dias",
+        qualified: "tag QUAL_QUALIFICADO (ou nome com QUALIFICADO, sem NAO_QUALIFICADO)",
+        disqualified: "tag QUAL_NAO_QUALIFICADO (ou NAO_QUALIFICADO / DESQUALIFICADO)",
+        roasX: "totalReceivedCohort / investment",
+        roiPercent: "(totalReceivedCohort - investment) / investment * 100",
       },
       results: metrics,
     };
@@ -530,11 +603,11 @@ export function ReportsDashboard({
     filterMode,
     selectedCampaign,
     selectedSourceId,
-    selectedSourceName,
+    selectedFormName,
     rangeStart,
     rangeEnd,
     leads.length,
-    sourceFilteredLeads.length,
+    filteredLeads.length,
     meetings.length,
     installments.length,
     wonColumn,
@@ -569,7 +642,7 @@ export function ReportsDashboard({
     line("Gerado em", new Date().toLocaleString("pt-BR"));
     line("Modo", filterMode === "campaign" ? "Campanha" : "Range de datas");
     line("Campanha", selectedCampaign?.name || "N/A");
-    line("Fonte", selectedSourceName);
+    line("Formulario", selectedFormName);
     line(
       "Periodo",
       filterMode === "campaign"
@@ -583,18 +656,27 @@ export function ReportsDashboard({
     y += 7;
     line("Leads", String(metrics.totalLeads));
     line("Qualificados", String(metrics.qualifiedCount));
-    line("Vendas", String(metrics.totalSales));
-    line("Valor contratado", formatCurrency(metrics.revenue));
-    line("Recebido no período (parcelas)", formatCurrency(metrics.cashInPeriod));
-    line("Previsto no período (parcelas)", formatCurrency(metrics.expectedInPeriod));
-    line("Em aberto no período", formatCurrency(metrics.openInPeriod));
-    line("Total já recebido (coorte)", formatCurrency(metrics.totalReceivedCohort));
-    line("Saldo a receber (coorte)", formatCurrency(metrics.outstandingCohort));
+    line("Desqualificados", String(metrics.disqualifiedCount));
+    line("Reunioes marcadas", String(metrics.meetingsMarkedCount));
+    line("Reunioes realizadas", String(metrics.meetingsHeldCount));
+    line("No-show", `${metrics.noShowRate.toFixed(1)}% (${metrics.noShowLeadsCount} leads)`);
+    line("Contratos / vendas", String(metrics.contractsSold));
+    line("Total MRR", formatCurrency(metrics.totalMrr));
+    line("Total TCV", formatCurrency(metrics.totalTcv));
+    line("Ticket medio MRR", formatCurrency(metrics.avgMrrTicket));
+    line("Ticket medio TCV", formatCurrency(metrics.avgTcvTicket));
+    line("Conv. Lead -> Venda", `${metrics.leadToSaleRate.toFixed(1)}%`);
+    line("Conv. Qualificado -> Venda", `${metrics.qualifiedToSaleRate.toFixed(1)}%`);
+    line(
+      "Conv. Reuniao marcada -> Venda",
+      metrics.markedMeetingToSaleRate == null
+        ? "N/A"
+        : `${metrics.markedMeetingToSaleRate.toFixed(1)}%`
+    );
     line("CAC", formatCurrency(metrics.cac));
     line("CPL", formatCurrency(metrics.cpl));
     line("ROAS (x)", `${metrics.roas.toFixed(2)}x`);
-    line("ROI (x)", `${metrics.roiX.toFixed(2)}x`);
-    line("No-show", `${metrics.noShowRate.toFixed(1)}% (${metrics.noShowLeadsCount} leads)`);
+    line("ROI (%)", `${metrics.roiPercent.toFixed(1)}%`);
 
     y += 4;
     doc.text("Resumo de calculo (log JSON no arquivo separado)", 14, y);
@@ -670,20 +752,23 @@ export function ReportsDashboard({
 
             <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-end">
               <div className="w-full sm:max-w-sm space-y-1">
-                <p className="text-sm font-medium">Fonte do lead</p>
+                <p className="text-sm font-medium">Formulário</p>
                 <Select value={selectedSourceId} onValueChange={setSelectedSourceId}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Todas as fontes" />
+                    <SelectValue placeholder="Todos os formulários" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">Todas as fontes</SelectItem>
-                    {sources.map((source) => (
-                      <SelectItem key={source.id} value={source.id}>
-                        {source.name}
+                    <SelectItem value="all">Todos os formulários</SelectItem>
+                    {formSourceOptions.map((form) => (
+                      <SelectItem key={form.id} value={form.id}>
+                        {form.name} ({form.count})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  Fontes cadastradas em Webhooks (ex.: Formulario-BR / Formulario-USA)
+                </p>
               </div>
             </div>
 
@@ -818,37 +903,94 @@ export function ReportsDashboard({
             {/* Bloco 1 — Funil principal */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Funil Principal</p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <MetricCard title="Total de Leads" icon={Users}
-                  sub={`${metrics.totalLeads} leads no período`}>
+                  sub="Leads da coorte no período">
                   <AnimatedNumber value={metrics.totalLeads} />
                 </MetricCard>
                 <MetricCard title="Leads Qualificados" icon={Target} iconClass="text-blue-500"
-                  sub={<><AnimatedNumber value={metrics.qualificationRate} decimals={1} />% de qualificação</>}>
+                  sub={<><AnimatedNumber value={metrics.qualificationRate} decimals={1} />% dos leads</>}>
                   <span className="text-blue-600"><AnimatedNumber value={metrics.qualifiedCount} /></span>
+                </MetricCard>
+                <MetricCard title="Leads Desqualificados" icon={AlertCircle} iconClass="text-orange-500"
+                  sub={<><AnimatedNumber value={metrics.disqualificationRate} decimals={1} />% dos leads</>}>
+                  <span className="text-orange-600"><AnimatedNumber value={metrics.disqualifiedCount} /></span>
+                </MetricCard>
+                <MetricCard title="Vendas / Contratos" icon={CheckCircle} iconClass="text-green-600"
+                  sub={<><AnimatedNumber value={metrics.leadToSaleRate} decimals={1} />% conversão lead→venda</>}>
+                  <span className="text-green-600"><AnimatedNumber value={metrics.totalSales} /></span>
                 </MetricCard>
                 <MetricCard
                   title="Reuniões Marcadas"
                   icon={Calendar}
-                  sub="Total de reuniões agendadas da coorte"
+                  sub={<><AnimatedNumber value={metrics.leadToMarkedMeetingRate} decimals={1} />% dos leads</>}
                 >
                   <AnimatedNumber value={metrics.meetingsMarkedCount} />
                 </MetricCard>
-                <MetricCard title="Reuniões Realizadas" icon={Phone}
-                  sub={<><AnimatedNumber value={metrics.leadToCallRate} decimals={1} />% dos leads · {metrics.meetingsNoShowCount} no-show</>}>
+                <MetricCard
+                  title="Reuniões Realizadas"
+                  icon={Phone}
+                  sub={
+                    metrics.markedToHeldRate == null ? (
+                      "Sem reuniões marcadas"
+                    ) : (
+                      <><AnimatedNumber value={metrics.markedToHeldRate} decimals={1} />% das marcadas</>
+                    )
+                  }
+                >
                   <AnimatedNumber value={metrics.meetingsHeldCount} />
                 </MetricCard>
-                <MetricCard title="Vendas" icon={CheckCircle} iconClass="text-green-600"
-                  sub="Leads da coorte em etapa de ganho">
-                  <span className="text-green-600"><AnimatedNumber value={metrics.totalSales} /></span>
+                <MetricCard
+                  title="No-show"
+                  icon={AlertCircle}
+                  iconClass="text-red-500"
+                  sub={<><AnimatedNumber value={metrics.noShowRate} decimals={1} />% dos leads com reunião</>}
+                >
+                  <span className="text-red-600"><AnimatedNumber value={metrics.noShowLeadsCount} /></span>
+                </MetricCard>
+                <MetricCard
+                  title="Leads c/ reunião realizada"
+                  icon={Users}
+                  sub={<><AnimatedNumber value={metrics.heldMeetingLeadRate} decimals={1} />% dos leads</>}
+                >
+                  <AnimatedNumber value={metrics.uniqueLeadsWithHeldMeeting} />
                 </MetricCard>
               </div>
             </div>
 
-            {/* Bloco 2 — Financeiro (coorte vs janela temporal explícita) */}
+            {/* Bloco 2 — Contratos MRR / TCV */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                Financeiro
+                Contratos (MRR / TCV)
+              </p>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                <MetricCard title="Contratos vendidos" icon={CheckCircle} iconClass="text-green-600"
+                  sub={`${metrics.mrrContracts} MRR · ${metrics.tcvContracts} TCV`}>
+                  <AnimatedNumber value={metrics.contractsSold} />
+                </MetricCard>
+                <MetricCard title="Total MRR" icon={DollarSign} iconClass="text-blue-600"
+                  sub="Soma do valor mensal das vendas">
+                  <span className="text-blue-600"><AnimatedCurrency value={metrics.totalMrr} /></span>
+                </MetricCard>
+                <MetricCard title="Total TCV" icon={DollarSign} iconClass="text-green-600"
+                  sub="Soma do valor cheio dos contratos">
+                  <span className="text-green-600"><AnimatedCurrency value={metrics.totalTcv} /></span>
+                </MetricCard>
+                <MetricCard title="Ticket médio MRR" icon={DollarSign}
+                  sub="MRR total ÷ contratos">
+                  <AnimatedCurrency value={metrics.avgMrrTicket} />
+                </MetricCard>
+                <MetricCard title="Ticket médio TCV" icon={DollarSign}
+                  sub="TCV total ÷ contratos">
+                  <AnimatedCurrency value={metrics.avgTcvTicket} />
+                </MetricCard>
+              </div>
+            </div>
+
+            {/* Bloco 2b — Financeiro (caixa / parcelas) */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                Financeiro (caixa)
               </p>
               {metrics.totalSales > 0 && !metrics.showPeriodInstallmentBreakdown && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200 mb-3">
@@ -861,10 +1003,10 @@ export function ReportsDashboard({
                   <AnimatedCurrency value={metrics.investment} />
                 </MetricCard>
                 <MetricCard
-                  title="Valor contratado"
+                  title="TCV contratado"
                   icon={DollarSign}
                   iconClass="text-green-600"
-                  sub="Soma deal_value das vendas da coorte"
+                  sub="Soma do valor cheio das vendas"
                 >
                   <span className="text-green-600"><AnimatedCurrency value={metrics.revenue} /></span>
                 </MetricCard>
@@ -920,9 +1062,6 @@ export function ReportsDashboard({
                 >
                   <span className="text-orange-600"><AnimatedCurrency value={metrics.outstandingCohort} /></span>
                 </MetricCard>
-                <MetricCard title="Ticket médio" icon={DollarSign} sub="Valor contratado ÷ vendas">
-                  <AnimatedCurrency value={metrics.avgTicket} />
-                </MetricCard>
               </div>
             </div>
 
@@ -933,7 +1072,7 @@ export function ReportsDashboard({
                 <MetricCard title="CPL" icon={DollarSign} sub="Custo por Lead">
                   <AnimatedCurrency value={metrics.cpl} />
                 </MetricCard>
-                <MetricCard title="Custo p/ Qualificado" icon={DollarSign} sub="Por lead com tag QUALIFICADO">
+                <MetricCard title="Custo p/ Qualificado" icon={DollarSign} sub="Por lead com tag de qualificação">
                   <AnimatedCurrency value={metrics.costPerQualified} />
                 </MetricCard>
                 <MetricCard title="Custo p/ Reunião" icon={DollarSign} sub="Investimento ÷ reuniões realizadas">
@@ -960,12 +1099,12 @@ export function ReportsDashboard({
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Resultado</p>
               <div className="grid grid-cols-2 md:grid-cols-2 gap-4">
-                <MetricCard title="ROAS" icon={TrendingUp} iconClass="text-green-600"
-                  sub={
-                    metrics.roasUsesPeriodCash
-                      ? "Caixa no período (parcelas pagas na janela) ÷ investimento"
-                      : "Total já recebido da coorte ÷ investimento"
-                  }>
+                <MetricCard
+                  title="ROAS"
+                  icon={TrendingUp}
+                  iconClass="text-green-600"
+                  sub="Total já recebido da coorte ÷ investimento"
+                >
                   {metrics.investment > 0 ? (
                     <span className={metrics.roas >= 1 ? "text-green-600" : "text-red-600"}>
                       <AnimatedNumber value={metrics.roas} decimals={2} />x
@@ -975,17 +1114,13 @@ export function ReportsDashboard({
                   )}
                 </MetricCard>
                 <MetricCard
-                  title="ROI (x)"
+                  title="ROI"
                   icon={Percent}
-                  sub={
-                    metrics.roasUsesPeriodCash
-                      ? "(Recebido no período − investimento) ÷ investimento"
-                      : "(Total já recebido da coorte − investimento) ÷ investimento"
-                  }
+                  sub="(Total já recebido da coorte − investimento) ÷ investimento"
                 >
                   {metrics.investment > 0 ? (
-                    <span className={metrics.roiX >= 0 ? "text-green-600" : "text-red-600"}>
-                      <AnimatedNumber value={metrics.roiX} decimals={2} />x
+                    <span className={metrics.roiPercent >= 0 ? "text-green-600" : "text-red-600"}>
+                      <AnimatedNumber value={metrics.roiPercent} decimals={1} />%
                     </span>
                   ) : (
                     <span className="text-muted-foreground text-base">N/A</span>
@@ -997,34 +1132,22 @@ export function ReportsDashboard({
             {/* Bloco 5 — Taxas de Conversão */}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Taxas de Conversão</p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <MetricCard title="Lead → Venda" icon={Percent}
-                  sub="Leads criados no período que já estão ganhos">
+                  sub="Vendas ÷ total de leads">
                   <AnimatedNumber value={metrics.leadToSaleRate} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Qualificado → Venda" icon={Percent}
                   sub="Vendas ÷ leads qualificados">
                   <AnimatedNumber value={metrics.qualifiedToSaleRate} decimals={1} />%
                 </MetricCard>
-                <MetricCard title="Reunião → Venda" icon={Percent}
-                  sub="Vendas com reunião realizada ÷ reuniões realizadas">
-                  {metrics.callToSaleRate == null ? (
+                <MetricCard title="Reunião marcada → Venda" icon={Percent}
+                  sub="Vendas com reunião ÷ leads com reunião marcada">
+                  {metrics.markedMeetingToSaleRate == null ? (
                     <span className="text-muted-foreground text-base">—</span>
                   ) : (
-                    <><AnimatedNumber value={metrics.callToSaleRate} decimals={1} />%</>
+                    <><AnimatedNumber value={metrics.markedMeetingToSaleRate} decimals={1} />%</>
                   )}
-                </MetricCard>
-                <MetricCard title="Reuniões p/ Venda" icon={Phone}
-                  sub="Reuniões realizadas ÷ vendas">
-                  {metrics.callsPerSale == null ? (
-                    <span className="text-muted-foreground text-base">—</span>
-                  ) : (
-                    <AnimatedNumber value={metrics.callsPerSale} decimals={1} />
-                  )}
-                </MetricCard>
-                <MetricCard title="Taxa de No-show" icon={AlertCircle}
-                  sub={`${metrics.noShowLeadsCount} lead(s) não compareceram`}>
-                  <AnimatedNumber value={metrics.noShowRate} decimals={1} />%
                 </MetricCard>
               </div>
             </div>

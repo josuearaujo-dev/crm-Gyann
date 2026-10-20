@@ -61,6 +61,13 @@ import type { Lead, Tag, PipelineColumn, Task, LeadNote, USState, Nationality, L
 import { getWonPipelineColumn } from "@/lib/pipeline-utils";
 import { getLeadFaturamentoDisplay, getLeadSegmentoDisplay } from "@/lib/lead-metadata-display";
 import { formatLeadDaysLabel, getLeadTimelineInfo } from "@/lib/lead-timeline";
+import {
+  computeMrrFromTcv,
+  computeTcvFromMrr,
+  getLeadMrr,
+  getLeadTcv,
+  type ContractType,
+} from "@/lib/contract-value";
 import { CallbackModal } from "@/components/crm/callback-modal";
 import { MeetingModal } from "@/components/crm/meeting-modal";
 import { MarkLostDialog } from "@/components/crm/mark-lost-dialog";
@@ -499,11 +506,42 @@ export function LeadDetail({
     }
   };
 
+  const saveContractFields = async (patch: {
+    contract_type?: ContractType | null;
+    contract_months?: number | null;
+    mrr_value?: number | null;
+    deal_value?: number;
+  }) => {
+    const { error } = await supabase.from("leads").update(patch).eq("id", lead.id);
+    if (error) {
+      console.error("[v0] Error saving contract fields:", error);
+      if (/contract_type|contract_months|mrr_value|column .* does not exist/i.test(error.message || "")) {
+        alert(
+          "Colunas de contrato ainda não existem no banco. Rode o script scripts/029_lead_contract_mrr_tcv.sql no Supabase."
+        );
+        return;
+      }
+      alert("Erro ao salvar dados do contrato.");
+      return;
+    }
+    onUpdate();
+  };
+
   const handleMarkAsWon = async () => {
     // Validar se o valor foi preenchido
-    const currentValue = lead.deal_value || 0;
+    const currentValue = getLeadTcv(lead);
     if (currentValue <= 0) {
-      alert("Por favor, preencha o valor do negócio antes de marcar como ganho.");
+      alert("Por favor, preencha o TCV (valor cheio do contrato) antes de marcar como ganho.");
+      return;
+    }
+
+    if (!lead.contract_type) {
+      alert("Selecione o tipo de contrato (MRR ou TCV) antes de marcar como ganho.");
+      return;
+    }
+
+    if (!lead.contract_months || lead.contract_months < 1) {
+      alert("Informe o tempo do contrato (em meses) antes de marcar como ganho.");
       return;
     }
 
@@ -529,12 +567,18 @@ export function LeadDetail({
         return;
       }
 
+      const mrrValue = getLeadMrr(lead) || computeMrrFromTcv(currentValue, lead.contract_months);
+
       const { error: updateError } = await supabase
         .from("leads")
         .update({
           column_id: wonColumnId,
           payment_model: paymentModel,
           amount_received: receivedAmount,
+          deal_value: currentValue,
+          mrr_value: mrrValue,
+          contract_type: lead.contract_type,
+          contract_months: lead.contract_months,
           won_at: lead.won_at || new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -780,28 +824,116 @@ export function LeadDetail({
             </div>
           </div>
 
-          {/* Valor do Lead */}
+          {/* Valor do Lead / Contrato */}
           <div className="space-y-2">
-            <Label>Valor do Negócio (USD)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
-              value={lead.deal_value || 0}
-              onChange={async (e) => {
-                const value = parseFloat(e.target.value) || 0;
-                await supabase
-                  .from("leads")
-                  .update({ deal_value: value })
-                  .eq("id", lead.id);
-                onUpdate();
-              }}
-              placeholder="0.00"
-              className="text-lg font-semibold"
-            />
+            <Label>Contrato da venda</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Tipo (MRR ou TCV)</Label>
+                <Select
+                  value={lead.contract_type || undefined}
+                  onValueChange={async (value) => {
+                    const nextType = value as ContractType;
+                    const months = Number(lead.contract_months || 0);
+                    const patch: {
+                      contract_type: ContractType;
+                      deal_value?: number;
+                      mrr_value?: number | null;
+                    } = { contract_type: nextType };
+                    if (months > 0) {
+                      if (nextType === "mrr" && getLeadMrr(lead) > 0) {
+                        patch.deal_value = computeTcvFromMrr(getLeadMrr(lead), months);
+                      }
+                      if (nextType === "tcv" && getLeadTcv(lead) > 0) {
+                        patch.mrr_value = computeMrrFromTcv(getLeadTcv(lead), months);
+                      }
+                    }
+                    await saveContractFields(patch);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mrr">MRR (valor mensal)</SelectItem>
+                    <SelectItem value="tcv">TCV (valor cheio)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Tempo do contrato (meses)</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={lead.contract_months || ""}
+                  onChange={async (e) => {
+                    const raw = parseInt(e.target.value, 10);
+                    const months = Number.isFinite(raw) && raw >= 1 ? raw : null;
+                    const patch: {
+                      contract_months: number | null;
+                      deal_value?: number;
+                      mrr_value?: number | null;
+                    } = { contract_months: months };
+                    if (months && months > 0) {
+                      if (lead.contract_type === "mrr" && getLeadMrr(lead) > 0) {
+                        patch.deal_value = computeTcvFromMrr(getLeadMrr(lead), months);
+                      } else if (getLeadTcv(lead) > 0) {
+                        patch.mrr_value = computeMrrFromTcv(getLeadTcv(lead), months);
+                      }
+                    }
+                    await saveContractFields(patch);
+                  }}
+                  placeholder="ex: 12"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">
+                  {lead.contract_type === "mrr" ? "MRR mensal (USD)" : "TCV valor cheio (USD)"}
+                </Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={
+                    lead.contract_type === "mrr"
+                      ? (lead.mrr_value ?? getLeadMrr(lead)) || ""
+                      : lead.deal_value || ""
+                  }
+                  onChange={async (e) => {
+                    const value = parseFloat(e.target.value) || 0;
+                    const months = Number(lead.contract_months || 0);
+                    if (lead.contract_type === "mrr") {
+                      await saveContractFields({
+                        mrr_value: value,
+                        deal_value: months > 0 ? computeTcvFromMrr(value, months) : lead.deal_value,
+                      });
+                    } else {
+                      await saveContractFields({
+                        deal_value: value,
+                        mrr_value: months > 0 ? computeMrrFromTcv(value, months) : lead.mrr_value,
+                        contract_type: lead.contract_type || "tcv",
+                      });
+                    }
+                  }}
+                  placeholder="0.00"
+                  className="text-lg font-semibold"
+                />
+              </div>
+            </div>
+            <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-0.5">
+              <p>
+                <strong>TCV</strong> (valor cheio):{" "}
+                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(getLeadTcv(lead))}
+              </p>
+              <p>
+                <strong>MRR</strong> (mensal):{" "}
+                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(getLeadMrr(lead))}
+                {lead.contract_months ? ` · ${lead.contract_months} meses` : ""}
+              </p>
+            </div>
             <p className="text-xs text-muted-foreground">
-              Este valor será somado ao valor potencial enquanto o lead estiver em aberto, 
-              e ao valor realizado quando for fechado ganho.
+              Na venda, informe o tipo, o tempo do contrato e o valor. O outro indicador (MRR ou TCV) é calculado automaticamente.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
@@ -991,7 +1123,12 @@ export function LeadDetail({
                     <div className="flex gap-2">
                       <Button
                         onClick={handleMarkAsWon}
-                        disabled={isMarkingWon || (lead.deal_value || 0) <= 0}
+                        disabled={
+                          isMarkingWon ||
+                          getLeadTcv(lead) <= 0 ||
+                          !lead.contract_type ||
+                          !lead.contract_months
+                        }
                         className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                       >
                         <TrophyIcon className="w-4 h-4 mr-2" />

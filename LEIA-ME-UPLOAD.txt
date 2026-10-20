@@ -1,0 +1,32 @@
+Upload manual — Relatórios MRR/TCV + filtros (2026-10-20)
+
+Substitua estes arquivos no GitHub (mesmos caminhos):
+
+- app/dashboard/reports/page.tsx
+- components/crm/reports-dashboard.tsx
+- components/crm/lead-detail.tsx
+- lib/types.ts
+- lib/contract-value.ts          (NOVO — criar pasta/arquivo)
+- lib/report-finance.ts
+- scripts/029_lead_contract_mrr_tcv.sql  (NOVO)
+- .env.example
+- .gitignore
+
+O que muda:
+- Contrato MRR/TCV + tempo (meses) no detalhe do lead
+- Relatório: contratos, MRR, TCV, tickets médios
+- Funil: qualificados (QUAL_QUALIFICADO), desqualificados (QUAL_NAO_QUALIFICADO)
+- Filtro por formulário = fontes do CRM (Formulario-BR / Formulario-USA)
+- Taxas: Lead→Venda, Qualificado→Venda, Reunião marcada→Venda
+- Correções: won_at, ROAS/ROI, ROI em %
+
+Como subir no GitHub:
+1. Abra o repositório no GitHub
+2. Para cada arquivo, use Upload file / Replace no caminho correspondente
+   OU arraste a pasta deploy-manual por cima do clone local e dê commit/push
+3. Aguarde o redeploy da Vercel
+
+OBRIGATÓRIO no Supabase (SQL Editor):
+- Rode o conteúdo de scripts/029_lead_contract_mrr_tcv.sql
+
+NÃO envie .env.local (credenciais ficam só na Vercel / máquina local).

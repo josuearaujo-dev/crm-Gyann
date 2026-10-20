@@ -61,6 +61,12 @@ export interface Lead {
   assigned_to: string | null
   position: number
   deal_value: number
+  /** Tipo do contrato na venda: MRR (mensal) ou TCV (valor cheio). */
+  contract_type?: 'mrr' | 'tcv' | null
+  /** Duração do contrato em meses. */
+  contract_months?: number | null
+  /** Valor mensal (MRR). O TCV fica em deal_value. */
+  mrr_value?: number | null
   payment_model: 'full' | 'installments' | 'entry_plus_installments' | null
   amount_received: number | null
   installments_count: number | null

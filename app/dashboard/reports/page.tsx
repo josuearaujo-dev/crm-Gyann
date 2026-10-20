@@ -12,10 +12,10 @@ export default async function ReportsPage() {
     redirect("/auth/login");
   }
 
-  // Leads com suas tags (para identificar qualificados)
+  // Leads com suas tags (qualificação via tags.type)
   const { data: leads } = await supabase
     .from("leads")
-    .select("*, lead_tags(tags(id, name, color))")
+    .select("*, lead_tags(tags(id, name, color, type))")
     .order("created_at", { ascending: false });
 
   // Colunas do pipeline
