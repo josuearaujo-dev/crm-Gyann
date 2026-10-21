@@ -581,10 +581,11 @@ export function ReportsDashboard({
         meetingsPerSale: "meetingsHeldCount / totalSales",
         cpl: "investment / totalLeads",
         cac: "investment / totalSales",
-        totalTcv: "sum(deal_value) vendas da coorte",
-        totalMrr: "sum(mrr_value ou deal_value/meses) vendas da coorte",
-        avgTcvTicket: "totalTcv / contractsSold",
-        avgMrrTicket: "totalMrr / contractsSold",
+        totalTcv: "sum(deal_value) só contratos tipo TCV (à vista); legado sem tipo conta como TCV",
+        totalMrr: "sum(mrr_value) só contratos tipo MRR (mensal)",
+        totalMrrContractValue: "sum(mensalidade × meses) só MRR",
+        avgTcvTicket: "totalTcv / tcvContracts",
+        avgMrrTicket: "totalMrr / mrrContracts",
         totalReceivedCohort:
           "por venda: se há parcelas → soma(amount) com paid_at; senão legado (integral ou amount_received)",
         outstandingCohort: "revenue - totalReceivedCohort",
@@ -964,27 +965,45 @@ export function ReportsDashboard({
                 Contratos (MRR / TCV)
               </p>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
-                <MetricCard title="Contratos vendidos" icon={CheckCircle} iconClass="text-green-600"
-                  sub={`${metrics.mrrContracts} MRR · ${metrics.tcvContracts} TCV`}>
+                <MetricCard
+                  title="Contratos vendidos"
+                  icon={CheckCircle}
+                  iconClass="text-green-600"
+                  sub={
+                    metrics.untypedContracts > 0
+                      ? `${metrics.mrrContracts} MRR · ${metrics.tcvContracts} TCV · ${metrics.untypedContracts} legado`
+                      : `${metrics.mrrContracts} mensal (MRR) · ${metrics.tcvContracts} à vista (TCV)`
+                  }
+                >
                   <AnimatedNumber value={metrics.contractsSold} />
                 </MetricCard>
                 <MetricCard title="Total MRR" icon={DollarSign} iconClass="text-blue-600"
-                  sub="Soma do valor mensal das vendas">
+                  sub={`Soma das mensalidades · ${metrics.mrrContracts} contrato(s) MRR`}>
                   <span className="text-blue-600"><AnimatedCurrency value={metrics.totalMrr} /></span>
                 </MetricCard>
                 <MetricCard title="Total TCV" icon={DollarSign} iconClass="text-green-600"
-                  sub="Soma do valor cheio dos contratos">
+                  sub={`Soma à vista · ${metrics.tcvContracts} contrato(s) TCV`}>
                   <span className="text-green-600"><AnimatedCurrency value={metrics.totalTcv} /></span>
                 </MetricCard>
                 <MetricCard title="Ticket médio MRR" icon={DollarSign}
-                  sub="MRR total ÷ contratos">
+                  sub="Média da mensalidade (só MRR)">
                   <AnimatedCurrency value={metrics.avgMrrTicket} />
                 </MetricCard>
                 <MetricCard title="Ticket médio TCV" icon={DollarSign}
-                  sub="TCV total ÷ contratos">
+                  sub="Média do valor cheio (só TCV)">
                   <AnimatedCurrency value={metrics.avgTcvTicket} />
                 </MetricCard>
               </div>
+              {metrics.mrrContracts > 0 && (
+                <p className="text-xs text-muted-foreground mb-4">
+                  Valor total dos contratos MRR (ex.: 3 × $2.000 = $6.000):{" "}
+                  <strong>
+                    {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
+                      metrics.totalMrrContractValue
+                    )}
+                  </strong>
+                </p>
+              )}
             </div>
 
             {/* Bloco 2b — Financeiro (caixa / parcelas) */}
@@ -1138,7 +1157,7 @@ export function ReportsDashboard({
                   <AnimatedNumber value={metrics.leadToSaleRate} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Qualificado → Venda" icon={Percent}
-                  sub="Vendas ÷ leads qualificados">
+                  sub="Vendas ÷ qualificados (pode >100% se vender lead não qualificado)">
                   <AnimatedNumber value={metrics.qualifiedToSaleRate} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Reunião marcada → Venda" icon={Percent}

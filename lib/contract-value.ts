@@ -2,20 +2,32 @@ import type { Lead } from "@/lib/types";
 
 export type ContractType = "mrr" | "tcv";
 
-/** TCV = valor cheio do contrato (deal_value). */
-export function getLeadTcv(lead: Pick<Lead, "deal_value">): number {
+type ContractLead = Pick<
+  Lead,
+  "deal_value" | "mrr_value" | "contract_months" | "contract_type"
+>;
+
+/** Valor cheio do contrato (deal_value). */
+export function getLeadContractTotal(lead: Pick<Lead, "deal_value">): number {
   return Math.max(Number(lead.deal_value || 0), 0);
 }
 
-/** MRR = valor mensal; deriva de mrr_value ou TCV ÷ meses. */
-export function getLeadMrr(
-  lead: Pick<Lead, "deal_value" | "mrr_value" | "contract_months">
-): number {
+/** @deprecated use getLeadContractTotal — TCV de tipo à vista é outra métrica. */
+export function getLeadTcv(lead: Pick<Lead, "deal_value">): number {
+  return getLeadContractTotal(lead);
+}
+
+/**
+ * MRR mensal só para contratos do tipo MRR (pagamento mensal).
+ * Não deriva MRR a partir de vendas TCV (à vista).
+ */
+export function getLeadMrr(lead: ContractLead): number {
+  if (lead.contract_type !== "mrr") return 0;
   const stored = Number(lead.mrr_value || 0);
   if (stored > 0) return stored;
   const months = Number(lead.contract_months || 0);
-  const tcv = getLeadTcv(lead);
-  if (months > 0 && tcv > 0) return tcv / months;
+  const total = getLeadContractTotal(lead);
+  if (months > 0 && total > 0) return total / months;
   return 0;
 }
 
@@ -29,39 +41,70 @@ export function computeMrrFromTcv(tcv: number, months: number): number {
   return Math.round((tcv / months) * 100) / 100;
 }
 
-export function summarizeContracts(
-  salesLeads: Array<Pick<Lead, "deal_value" | "mrr_value" | "contract_months" | "contract_type">>
-): {
+/** Tipo efetivo: legado sem tipo e com valor → trata como TCV (à vista). */
+export function getEffectiveContractType(lead: ContractLead): ContractType | null {
+  if (lead.contract_type === "mrr" || lead.contract_type === "tcv") {
+    return lead.contract_type;
+  }
+  if (getLeadContractTotal(lead) > 0) return "tcv";
+  return null;
+}
+
+/**
+ * Relatório separado:
+ * - TCV = contratos à vista (paga tudo de uma vez)
+ * - MRR = contratos mensais (mensalidade; total = mensal × meses)
+ */
+export function summarizeContracts(salesLeads: ContractLead[]): {
   contractsSold: number;
-  totalMrr: number;
-  totalTcv: number;
-  avgMrrTicket: number;
-  avgTcvTicket: number;
   mrrContracts: number;
   tcvContracts: number;
+  /** Soma das mensalidades (só MRR). */
+  totalMrr: number;
+  /** Soma dos valores à vista (só TCV). */
+  totalTcv: number;
+  /** Soma do valor total dos contratos MRR (mensal × meses). */
+  totalMrrContractValue: number;
+  /** Ticket médio da mensalidade (só contratos MRR). */
+  avgMrrTicket: number;
+  /** Ticket médio do valor à vista (só contratos TCV). */
+  avgTcvTicket: number;
+  untypedContracts: number;
 } {
-  const contractsSold = salesLeads.length;
-  let totalMrr = 0;
-  let totalTcv = 0;
   let mrrContracts = 0;
   let tcvContracts = 0;
+  let untypedContracts = 0;
+  let totalMrr = 0;
+  let totalTcv = 0;
+  let totalMrrContractValue = 0;
 
   for (const lead of salesLeads) {
-    const tcv = getLeadTcv(lead);
-    const mrr = getLeadMrr(lead);
-    totalTcv += tcv;
-    totalMrr += mrr;
-    if (lead.contract_type === "mrr") mrrContracts += 1;
-    else if (lead.contract_type === "tcv") tcvContracts += 1;
+    const typed = lead.contract_type === "mrr" || lead.contract_type === "tcv";
+    const effective = getEffectiveContractType(lead);
+    const total = getLeadContractTotal(lead);
+
+    if (!typed && total > 0) untypedContracts += 1;
+
+    if (effective === "mrr") {
+      mrrContracts += 1;
+      const mrr = getLeadMrr({ ...lead, contract_type: "mrr" });
+      totalMrr += mrr;
+      totalMrrContractValue += total > 0 ? total : computeTcvFromMrr(mrr, Number(lead.contract_months || 0));
+    } else if (effective === "tcv") {
+      tcvContracts += 1;
+      totalTcv += total;
+    }
   }
 
   return {
-    contractsSold,
-    totalMrr,
-    totalTcv,
-    avgMrrTicket: contractsSold > 0 ? totalMrr / contractsSold : 0,
-    avgTcvTicket: contractsSold > 0 ? totalTcv / contractsSold : 0,
+    contractsSold: salesLeads.length,
     mrrContracts,
     tcvContracts,
+    totalMrr,
+    totalTcv,
+    totalMrrContractValue,
+    avgMrrTicket: mrrContracts > 0 ? totalMrr / mrrContracts : 0,
+    avgTcvTicket: tcvContracts > 0 ? totalTcv / tcvContracts : 0,
+    untypedContracts,
   };
 }

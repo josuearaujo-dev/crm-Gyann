@@ -1,4 +1,4 @@
-Upload manual — Relatórios MRR/TCV + filtros (2026-10-20)
+Upload manual — Relatórios MRR/TCV (regra final) — 2026-10-20
 
 Substitua estes arquivos no GitHub (mesmos caminhos):
 
@@ -6,27 +6,32 @@ Substitua estes arquivos no GitHub (mesmos caminhos):
 - components/crm/reports-dashboard.tsx
 - components/crm/lead-detail.tsx
 - lib/types.ts
-- lib/contract-value.ts          (NOVO — criar pasta/arquivo)
+- lib/contract-value.ts                    (NOVO)
 - lib/report-finance.ts
-- scripts/029_lead_contract_mrr_tcv.sql  (NOVO)
+- scripts/029_lead_contract_mrr_tcv.sql    (NOVO — rodar no Supabase)
+- scripts/030_debug_vendas_campanha_setembro.sql  (opcional, diagnóstico)
 - .env.example
 - .gitignore
 
 O que muda:
-- Contrato MRR/TCV + tempo (meses) no detalhe do lead
-- Relatório: contratos, MRR, TCV, tickets médios
-- Funil: qualificados (QUAL_QUALIFICADO), desqualificados (QUAL_NAO_QUALIFICADO)
-- Filtro por formulário = fontes do CRM (Formulario-BR / Formulario-USA)
-- Taxas: Lead→Venda, Qualificado→Venda, Reunião marcada→Venda
-- Correções: won_at, ROAS/ROI, ROI em %
+- Cadastro da venda:
+  - TCV = paga tudo à vista (só valor cheio)
+  - MRR = paga mensal (mensalidade + qtd. meses → total)
+- Relatório:
+  - Contratos vendidos (qtd MRR / qtd TCV)
+  - Total MRR (soma das mensalidades)
+  - Total TCV (soma à vista)
+  - Ticket médio MRR = média da mensalidade
+  - Ticket médio TCV = média do valor cheio
+  - Valor total dos contratos MRR (mensalidade × meses)
+- Funil: qualificados, desqualificados, reuniões, no-show, % e 3 taxas
+- Qualificado → Venda pode >100% (venda não exige tag qualificado)
+- Filtro Formulário = fontes do CRM (Formulario-BR / USA)
 
-Como subir no GitHub:
-1. Abra o repositório no GitHub
-2. Para cada arquivo, use Upload file / Replace no caminho correspondente
-   OU arraste a pasta deploy-manual por cima do clone local e dê commit/push
-3. Aguarde o redeploy da Vercel
+Como subir:
+1. No GitHub, Upload file / Replace em cada caminho
+   OU copie a pasta deploy-manual por cima do projeto e commit/push
+2. No Supabase SQL Editor: rode scripts/029_lead_contract_mrr_tcv.sql
+3. Aguarde redeploy (Vercel)
 
-OBRIGATÓRIO no Supabase (SQL Editor):
-- Rode o conteúdo de scripts/029_lead_contract_mrr_tcv.sql
-
-NÃO envie .env.local (credenciais ficam só na Vercel / máquina local).
+NÃO envie .env.local
