@@ -421,14 +421,34 @@ export function ReportsDashboard({
     const costPerCall = totalCalls > 0 && investment > 0 ? investment / totalCalls : null;
     const cac = totalSales > 0 && investment > 0 ? investment / totalSales : 0;
 
-    // 3 taxas de conversão pedidas pelo cliente
-    const leadToSaleRate = totalLeads > 0 ? (totalSales / totalLeads) * 100 : 0;
-    const qualifiedToSaleRate =
-      qualifiedCount > 0 ? (totalSales / qualifiedCount) * 100 : 0;
-    const markedMeetingToSaleRate =
+    // Taxas pedidas pelo cliente (todas em %)
+    // Agendamento = leads com reunião marcada ÷ leads
+    const taxaAgendamento = leadToMarkedMeetingRate;
+    // MQL = leads qualificados ÷ leads
+    const taxaMql = qualificationRate;
+    // No-show = leads que não compareceram ÷ leads com reunião marcada
+    const taxaNoShow =
+      uniqueLeadsWithMarkedMeeting > 0
+        ? (noShowLeadsCount / uniqueLeadsWithMarkedMeeting) * 100
+        : null;
+    // Comparecimento = leads que realizaram reunião ÷ leads com reunião marcada
+    const taxaComparecimento =
+      uniqueLeadsWithMarkedMeeting > 0
+        ? (uniqueLeadsWithHeldMeeting / uniqueLeadsWithMarkedMeeting) * 100
+        : null;
+    // Conversão = vendas (com reunião) ÷ leads com reunião marcada
+    const taxaConversaoReuniao =
       uniqueLeadsWithMarkedMeeting > 0
         ? (salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting) * 100
         : null;
+    // Inrate = vendas ÷ leads
+    const taxaInrate = totalLeads > 0 ? (totalSales / totalLeads) * 100 : 0;
+
+    // Taxas auxiliares (já usadas em outros cards)
+    const leadToSaleRate = taxaInrate;
+    const qualifiedToSaleRate =
+      qualifiedCount > 0 ? (totalSales / qualifiedCount) * 100 : 0;
+    const markedMeetingToSaleRate = taxaConversaoReuniao;
 
     const callsPerSale =
       totalSales > 0 ? meetingsHeldCount / totalSales : null;
@@ -486,6 +506,12 @@ export function ReportsDashboard({
       callsPerSale,
       noShowLeadsCount,
       noShowRate,
+      taxaAgendamento,
+      taxaMql,
+      taxaNoShow,
+      taxaComparecimento,
+      taxaConversaoReuniao,
+      taxaInrate,
       avgClosingTime,
       roas,
       roiPercent,
@@ -577,6 +603,12 @@ export function ReportsDashboard({
         markedMeetingToSaleRate: "salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting * 100",
         leadToMarkedMeetingRate: "uniqueLeadsWithMarkedMeeting / totalLeads * 100",
         markedToHeldRate: "meetingsHeldCount / meetingsMarkedCount * 100",
+        taxaAgendamento: "leads com reunião marcada / totalLeads * 100",
+        taxaMql: "qualifiedCount / totalLeads * 100",
+        taxaNoShow: "noShowLeadsCount / uniqueLeadsWithMarkedMeeting * 100",
+        taxaComparecimento: "uniqueLeadsWithHeldMeeting / uniqueLeadsWithMarkedMeeting * 100",
+        taxaConversaoReuniao: "salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting * 100",
+        taxaInrate: "totalSales / totalLeads * 100",
         noShowRate: "noShowLeadsCount / uniqueLeadsWithMarkedMeeting * 100",
         meetingsPerSale: "meetingsHeldCount / totalSales",
         cpl: "investment / totalLeads",
@@ -1148,25 +1180,65 @@ export function ReportsDashboard({
               </div>
             </div>
 
-            {/* Bloco 5 — Taxas de Conversão */}
+            {/* Bloco 5 — Taxas do cliente (todas em %) */}
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Taxas de Conversão</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                Taxas (%)
+              </p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                <MetricCard title="Lead → Venda" icon={Percent}
-                  sub="Vendas ÷ total de leads">
-                  <AnimatedNumber value={metrics.leadToSaleRate} decimals={1} />%
+                <MetricCard
+                  title="Taxa de Agendamento"
+                  icon={Percent}
+                  sub="Leads com reunião marcada ÷ total de leads"
+                >
+                  <AnimatedNumber value={metrics.taxaAgendamento} decimals={1} />%
                 </MetricCard>
-                <MetricCard title="Qualificado → Venda" icon={Percent}
-                  sub="Vendas ÷ qualificados (pode >100% se vender lead não qualificado)">
-                  <AnimatedNumber value={metrics.qualifiedToSaleRate} decimals={1} />%
+                <MetricCard
+                  title="Taxa de MQL"
+                  icon={Percent}
+                  sub="Leads qualificados ÷ total de leads"
+                >
+                  <AnimatedNumber value={metrics.taxaMql} decimals={1} />%
                 </MetricCard>
-                <MetricCard title="Reunião marcada → Venda" icon={Percent}
-                  sub="Vendas com reunião ÷ leads com reunião marcada">
-                  {metrics.markedMeetingToSaleRate == null ? (
+                <MetricCard
+                  title="Taxa de No-show"
+                  icon={Percent}
+                  sub="Não compareceram ÷ leads com reunião marcada"
+                >
+                  {metrics.taxaNoShow == null ? (
                     <span className="text-muted-foreground text-base">—</span>
                   ) : (
-                    <><AnimatedNumber value={metrics.markedMeetingToSaleRate} decimals={1} />%</>
+                    <><AnimatedNumber value={metrics.taxaNoShow} decimals={1} />%</>
                   )}
+                </MetricCard>
+                <MetricCard
+                  title="Taxa de Comparecimento"
+                  icon={Percent}
+                  sub="Compareceram ÷ leads com reunião marcada"
+                >
+                  {metrics.taxaComparecimento == null ? (
+                    <span className="text-muted-foreground text-base">—</span>
+                  ) : (
+                    <><AnimatedNumber value={metrics.taxaComparecimento} decimals={1} />%</>
+                  )}
+                </MetricCard>
+                <MetricCard
+                  title="Taxa de Conversão"
+                  icon={Percent}
+                  sub="Vendas ÷ leads com reunião marcada"
+                >
+                  {metrics.taxaConversaoReuniao == null ? (
+                    <span className="text-muted-foreground text-base">—</span>
+                  ) : (
+                    <><AnimatedNumber value={metrics.taxaConversaoReuniao} decimals={1} />%</>
+                  )}
+                </MetricCard>
+                <MetricCard
+                  title="Taxa de Inrate"
+                  icon={Percent}
+                  sub="Vendas ÷ total de leads"
+                >
+                  <AnimatedNumber value={metrics.taxaInrate} decimals={1} />%
                 </MetricCard>
               </div>
             </div>

@@ -1,4 +1,4 @@
-Upload manual — Relatórios MRR/TCV (regra final) — 2026-10-20
+Upload manual — Relatórios MRR/TCV + Taxas (%) — 2026-10-22
 
 Substitua estes arquivos no GitHub (mesmos caminhos):
 
@@ -9,29 +9,26 @@ Substitua estes arquivos no GitHub (mesmos caminhos):
 - lib/contract-value.ts                    (NOVO)
 - lib/report-finance.ts
 - scripts/029_lead_contract_mrr_tcv.sql    (NOVO — rodar no Supabase)
-- scripts/030_debug_vendas_campanha_setembro.sql  (opcional, diagnóstico)
+- scripts/030_debug_vendas_campanha_setembro.sql  (opcional)
 - .env.example
 - .gitignore
 
 O que muda:
-- Cadastro da venda:
-  - TCV = paga tudo à vista (só valor cheio)
-  - MRR = paga mensal (mensalidade + qtd. meses → total)
-- Relatório:
-  - Contratos vendidos (qtd MRR / qtd TCV)
-  - Total MRR (soma das mensalidades)
-  - Total TCV (soma à vista)
-  - Ticket médio MRR = média da mensalidade
-  - Ticket médio TCV = média do valor cheio
-  - Valor total dos contratos MRR (mensalidade × meses)
-- Funil: qualificados, desqualificados, reuniões, no-show, % e 3 taxas
-- Qualificado → Venda pode >100% (venda não exige tag qualificado)
-- Filtro Formulário = fontes do CRM (Formulario-BR / USA)
+- Cadastro venda: TCV (à vista) / MRR (mensal + meses)
+- Relatório contratos: qtd MRR/TCV, totais, tickets médios
+- Funil: qualificados, desqualificados, reuniões, no-show
+- Bloco Taxas (%):
+  - Taxa de Agendamento = leads com reunião ÷ leads
+  - Taxa de MQL = qualificados ÷ leads
+  - Taxa de No-show = não compareceram ÷ leads com reunião
+  - Taxa de Comparecimento = compareceram ÷ leads com reunião
+  - Taxa de Conversão = vendas ÷ leads com reunião
+  - Taxa de Inrate = vendas ÷ leads
+- Filtro Formulário = fontes do CRM
 
 Como subir:
-1. No GitHub, Upload file / Replace em cada caminho
-   OU copie a pasta deploy-manual por cima do projeto e commit/push
-2. No Supabase SQL Editor: rode scripts/029_lead_contract_mrr_tcv.sql
-3. Aguarde redeploy (Vercel)
+1. Upload/replace no GitHub nos mesmos caminhos
+2. Supabase: rodar scripts/029_lead_contract_mrr_tcv.sql
+3. Aguardar redeploy
 
 NÃO envie .env.local
