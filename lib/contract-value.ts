@@ -96,8 +96,9 @@ export function summarizeContracts(salesLeads: ContractLead[]): {
     }
   }
 
+  const contractsSold = salesLeads.length;
   return {
-    contractsSold: salesLeads.length,
+    contractsSold,
     mrrContracts,
     tcvContracts,
     totalMrr,
@@ -105,6 +106,10 @@ export function summarizeContracts(salesLeads: ContractLead[]): {
     totalMrrContractValue,
     avgMrrTicket: mrrContracts > 0 ? totalMrr / mrrContracts : 0,
     avgTcvTicket: tcvContracts > 0 ? totalTcv / tcvContracts : 0,
+    /** % dos contratos que são MRR (sobre o total de vendas). */
+    pctMrrContracts: contractsSold > 0 ? (mrrContracts / contractsSold) * 100 : 0,
+    /** % dos contratos que são TCV (sobre o total de vendas). */
+    pctTcvContracts: contractsSold > 0 ? (tcvContracts / contractsSold) * 100 : 0,
     untypedContracts,
   };
 }

@@ -36,7 +36,12 @@ import {
   FileJson2,
 } from "lucide-react";
 import type { Lead, PipelineColumn, LeadSource, Meeting, LeadInstallment } from "@/lib/types";
-import { getWonPipelineColumn, meetingTouchesPeriod } from "@/lib/pipeline-utils";
+import {
+  getContactAttemptColumn,
+  getQualificationStageColumn,
+  getWonPipelineColumn,
+  meetingTouchesPeriod,
+} from "@/lib/pipeline-utils";
 import {
   cohortCashAndOutstanding,
   countSalesWithInstallmentSchedule,
@@ -315,6 +320,11 @@ export function ReportsDashboard({
   }, [campaignLeads, selectedSourceId]);
 
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
+  const contactAttemptColumn = useMemo(() => getContactAttemptColumn(columns), [columns]);
+  const qualificationStageColumn = useMemo(
+    () => getQualificationStageColumn(columns),
+    [columns]
+  );
   const analysisPeriodDays = useMemo(() => {
     const start = new Date(`${analysisPeriod.start}T00:00:00`);
     const end = new Date(`${analysisPeriod.end}T23:59:59`);
@@ -407,6 +417,16 @@ export function ReportsDashboard({
       });
     }).length;
 
+    // Vendas com reunião realizada (compareceu) antes do ganho
+    const salesFromHeldMeetings = salesLeads.filter((lead) => {
+      if (!leadsWithHeldMeeting.has(lead.id)) return false;
+      const wonAt = closedAtMs(lead);
+      return meetingsHeld.some((m) => {
+        if (m.lead_id !== lead.id) return false;
+        return new Date(m.scheduled_at).getTime() <= wonAt;
+      });
+    }).length;
+
     // % do funil
     const leadToMarkedMeetingRate =
       totalLeads > 0 ? (uniqueLeadsWithMarkedMeeting / totalLeads) * 100 : 0;
@@ -414,6 +434,27 @@ export function ReportsDashboard({
       meetingsMarkedCount > 0 ? (meetingsHeldCount / meetingsMarkedCount) * 100 : null;
     const heldMeetingLeadRate =
       totalLeads > 0 ? (uniqueLeadsWithHeldMeeting / totalLeads) * 100 : 0;
+
+    // Taxa de resposta: saiu de Tentando Contato → Qualificação (ou etapas seguintes)
+    // Proxy sem histórico: posição atual no funil >= Qualificação ÷ posição >= Tentando Contato
+    const contactPos = contactAttemptColumn?.position;
+    const qualificacaoPos = qualificationStageColumn?.position;
+    const columnPosById = new Map(columns.map((c) => [c.id, c.position]));
+    let reachedContactAttempt = 0;
+    let reachedQualificationStage = 0;
+    if (contactPos != null && qualificacaoPos != null) {
+      for (const lead of filteredLeads) {
+        if (!lead.column_id) continue;
+        const pos = columnPosById.get(lead.column_id);
+        if (pos == null) continue;
+        if (pos >= contactPos) reachedContactAttempt += 1;
+        if (pos >= qualificacaoPos) reachedQualificationStage += 1;
+      }
+    }
+    const taxaResposta =
+      contactPos != null && qualificacaoPos != null && reachedContactAttempt > 0
+        ? (reachedQualificationStage / reachedContactAttempt) * 100
+        : null;
 
     // Métricas de custo
     const cpl = totalLeads > 0 && investment > 0 ? investment / totalLeads : 0;
@@ -436,10 +477,10 @@ export function ReportsDashboard({
       uniqueLeadsWithMarkedMeeting > 0
         ? (uniqueLeadsWithHeldMeeting / uniqueLeadsWithMarkedMeeting) * 100
         : null;
-    // Conversão = vendas (com reunião) ÷ leads com reunião marcada
+    // Conversão = vendas ÷ leads com reunião realizada (feita)
     const taxaConversaoReuniao =
-      uniqueLeadsWithMarkedMeeting > 0
-        ? (salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting) * 100
+      uniqueLeadsWithHeldMeeting > 0
+        ? (salesFromHeldMeetings / uniqueLeadsWithHeldMeeting) * 100
         : null;
     // Inrate = vendas ÷ leads
     const taxaInrate = totalLeads > 0 ? (totalSales / totalLeads) * 100 : 0;
@@ -512,10 +553,14 @@ export function ReportsDashboard({
       taxaComparecimento,
       taxaConversaoReuniao,
       taxaInrate,
+      taxaResposta,
+      reachedContactAttempt,
+      reachedQualificationStage,
       avgClosingTime,
       roas,
       roiPercent,
       salesFromMarkedMeetings,
+      salesFromHeldMeetings,
     };
   }, [
     filterMode,
@@ -524,6 +569,9 @@ export function ReportsDashboard({
     analysisPeriodDays,
     selectedCampaign,
     wonColumn,
+    contactAttemptColumn,
+    qualificationStageColumn,
+    columns,
     meetings,
     installments,
     analysisPeriod.start,
@@ -607,7 +655,9 @@ export function ReportsDashboard({
         taxaMql: "qualifiedCount / totalLeads * 100",
         taxaNoShow: "noShowLeadsCount / uniqueLeadsWithMarkedMeeting * 100",
         taxaComparecimento: "uniqueLeadsWithHeldMeeting / uniqueLeadsWithMarkedMeeting * 100",
-        taxaConversaoReuniao: "salesFromMarkedMeetings / uniqueLeadsWithMarkedMeeting * 100",
+        taxaConversaoReuniao: "salesFromHeldMeetings / uniqueLeadsWithHeldMeeting * 100",
+        taxaResposta:
+          "leads com etapa >= Qualificação / leads com etapa >= Tentando Contato * 100 (proxy por posição atual)",
         taxaInrate: "totalSales / totalLeads * 100",
         noShowRate: "noShowLeadsCount / uniqueLeadsWithMarkedMeeting * 100",
         meetingsPerSale: "meetingsHeldCount / totalSales",
@@ -996,7 +1046,7 @@ export function ReportsDashboard({
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
                 Contratos (MRR / TCV)
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 mb-4">
                 <MetricCard
                   title="Contratos vendidos"
                   icon={CheckCircle}
@@ -1008,6 +1058,14 @@ export function ReportsDashboard({
                   }
                 >
                   <AnimatedNumber value={metrics.contractsSold} />
+                </MetricCard>
+                <MetricCard title="% Contratos MRR" icon={Percent}
+                  sub={`${metrics.mrrContracts} de ${metrics.contractsSold} vendas`}>
+                  <AnimatedNumber value={metrics.pctMrrContracts} decimals={1} />%
+                </MetricCard>
+                <MetricCard title="% Contratos TCV" icon={Percent}
+                  sub={`${metrics.tcvContracts} de ${metrics.contractsSold} vendas`}>
+                  <AnimatedNumber value={metrics.pctTcvContracts} decimals={1} />%
                 </MetricCard>
                 <MetricCard title="Total MRR" icon={DollarSign} iconClass="text-blue-600"
                   sub={`Soma das mensalidades · ${metrics.mrrContracts} contrato(s) MRR`}>
@@ -1225,7 +1283,7 @@ export function ReportsDashboard({
                 <MetricCard
                   title="Taxa de Conversão"
                   icon={Percent}
-                  sub="Vendas ÷ leads com reunião marcada"
+                  sub="Vendas ÷ leads com reunião realizada (feita)"
                 >
                   {metrics.taxaConversaoReuniao == null ? (
                     <span className="text-muted-foreground text-base">—</span>
@@ -1239,6 +1297,21 @@ export function ReportsDashboard({
                   sub="Vendas ÷ total de leads"
                 >
                   <AnimatedNumber value={metrics.taxaInrate} decimals={1} />%
+                </MetricCard>
+                <MetricCard
+                  title="Taxa de Resposta"
+                  icon={Percent}
+                  sub={
+                    metrics.taxaResposta == null
+                      ? "Configure colunas Tentando Contato e Qualificação"
+                      : `Saiu p/ Qualificação ÷ Tentando Contato (${metrics.reachedQualificationStage}/${metrics.reachedContactAttempt})`
+                  }
+                >
+                  {metrics.taxaResposta == null ? (
+                    <span className="text-muted-foreground text-base">—</span>
+                  ) : (
+                    <><AnimatedNumber value={metrics.taxaResposta} decimals={1} />%</>
+                  )}
                 </MetricCard>
               </div>
             </div>

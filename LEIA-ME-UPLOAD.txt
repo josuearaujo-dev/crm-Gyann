@@ -1,4 +1,4 @@
-Upload manual — Relatórios MRR/TCV + Taxas (%) — 2026-10-22
+Upload manual — Relatórios + Taxas (resposta + conversão) — 2026-11-09
 
 Substitua estes arquivos no GitHub (mesmos caminhos):
 
@@ -6,29 +6,27 @@ Substitua estes arquivos no GitHub (mesmos caminhos):
 - components/crm/reports-dashboard.tsx
 - components/crm/lead-detail.tsx
 - lib/types.ts
-- lib/contract-value.ts                    (NOVO)
+- lib/contract-value.ts
 - lib/report-finance.ts
-- scripts/029_lead_contract_mrr_tcv.sql    (NOVO — rodar no Supabase)
+- lib/pipeline-utils.ts
+- scripts/029_lead_contract_mrr_tcv.sql    (rodar no Supabase se ainda não rodou)
 - scripts/030_debug_vendas_campanha_setembro.sql  (opcional)
+- scripts/031_debug_taxas_campanha_setembro.sql   (opcional)
+- scripts/032_debug_noshow_comparecimento.sql     (opcional)
 - .env.example
 - .gitignore
 
-O que muda:
-- Cadastro venda: TCV (à vista) / MRR (mensal + meses)
-- Relatório contratos: qtd MRR/TCV, totais, tickets médios
-- Funil: qualificados, desqualificados, reuniões, no-show
-- Bloco Taxas (%):
-  - Taxa de Agendamento = leads com reunião ÷ leads
-  - Taxa de MQL = qualificados ÷ leads
-  - Taxa de No-show = não compareceram ÷ leads com reunião
-  - Taxa de Comparecimento = compareceram ÷ leads com reunião
-  - Taxa de Conversão = vendas ÷ leads com reunião
-  - Taxa de Inrate = vendas ÷ leads
-- Filtro Formulário = fontes do CRM
+O que muda neste pacote:
+- Taxa de Conversão = vendas ÷ reuniões REALIZADAS (feitas), não marcadas
+- Taxa de Resposta (nova) = chegou em Qualificação ÷ chegou em Tentando Contato
+  (proxy pela etapa atual do funil)
+- % Contratos MRR e % Contratos TCV
+- Demais taxas: Agendamento, MQL, No-show, Comparecimento, Inrate
+- Cadastro MRR/TCV no lead
 
 Como subir:
 1. Upload/replace no GitHub nos mesmos caminhos
-2. Supabase: rodar scripts/029_lead_contract_mrr_tcv.sql
+2. Supabase: scripts/029_lead_contract_mrr_tcv.sql (se ainda não rodou)
 3. Aguardar redeploy
 
 NÃO envie .env.local

@@ -13,6 +13,23 @@ export function getWonPipelineColumn(columns: PipelineColumn[]): PipelineColumn 
   });
 }
 
+/** Coluna "Tentando Contato" (ou similar). */
+export function getContactAttemptColumn(columns: PipelineColumn[]): PipelineColumn | undefined {
+  return columns.find((c) => {
+    const n = c.name.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+    return n.includes("tentando contato") || n.includes("tentativa de contato") || n === "contato";
+  });
+}
+
+/** Coluna "Qualificação" (etapa do funil, não a tag). */
+export function getQualificationStageColumn(columns: PipelineColumn[]): PipelineColumn | undefined {
+  return columns.find((c) => {
+    const n = c.name.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+    if (n.includes("nao qualif") || n.includes("desqualif")) return false;
+    return n.includes("qualific");
+  });
+}
+
 /** Lead criado ou atualizado dentro do intervalo (útil para fechamentos no período). */
 export function leadTouchesPeriod(lead: { created_at: string; updated_at: string }, start: Date, end: Date): boolean {
   const created = new Date(lead.created_at);
