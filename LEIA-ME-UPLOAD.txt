@@ -1,33 +1,10 @@
-Upload manual — Follow-up no relatório + reentrada de lead — 2026-11-09
+Upload / deploy — Follow-up checkbox — 2026-11-09
 
-Substitua estes arquivos no GitHub (mesmos caminhos):
+OBRIGATÓRIO no Supabase SQL Editor:
+→ scripts/036_lead_attribution_followup.sql
 
-- components/crm/reports-dashboard.tsx   (OBRIGATÓRIO)
-- components/crm/lead-detail.tsx         (OBRIGATÓRIO)
-- app/dashboard/reports/page.tsx
-- lib/types.ts
-- lib/contract-value.ts
-- lib/report-finance.ts
-- lib/pipeline-utils.ts
-- scripts/029_lead_contract_mrr_tcv.sql  (rodar no Supabase se ainda não rodou)
-- scripts/034 / 035                      (opcional, diagnóstico SQL)
-- .env.example
-- .gitignore
-
-O que muda neste pacote:
-1) Relatórios — filtro "Escopo de leads":
-   - Só coorte (criados no período)
-   - Só follow-up (lead antigo + venda/reunião no período)
-   - Coorte + follow-up
-2) Bloco "Follow-up no período" (quando escopo = coorte):
-   - leads FU, vendas FU, reuniões, taxa conv. FU, taxa no-show FU
-3) Lead — botão "Atualizar data (reentrada na campanha)":
-   - created_at = hoje (entra na coorte atual)
-   - data original salva em metadata.original_created_at + histórico
-
-Como subir:
-1. Upload/replace no GitHub nos mesmos caminhos
-2. Supabase: scripts/029_lead_contract_mrr_tcv.sql (se ainda não rodou)
-3. Aguardar redeploy
+No lead: checkbox "Entrar como follow-up"
+- Ligado = follow-up no relatório
+- Desligado = conta pela data da reunião/venda
 
 NÃO envie .env.local
