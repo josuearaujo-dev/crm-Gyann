@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import {
   Sheet,
   SheetContent,
@@ -727,7 +728,14 @@ export function LeadDetail({
                 </span>
               </div>
               <div>
-                <SheetTitle className="text-xl">{lead.name}</SheetTitle>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <SheetTitle className="text-xl">{lead.name}</SheetTitle>
+                  {isFollowUp && (
+                    <Badge className="bg-amber-500 text-white hover:bg-amber-500">
+                      FOLLOW-UP
+                    </Badge>
+                  )}
+                </div>
                 {lead.company && (
                   <p className="text-sm text-muted-foreground">{lead.company}</p>
                 )}
@@ -1235,37 +1243,54 @@ export function LeadDetail({
                         Marcar como Finalizado
                       </Button>
                     )}
-                    <div className="rounded-lg border p-3 space-y-3">
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium flex items-center gap-2">
-                          <RefreshCw className="w-4 h-4" />
-                          Follow-up no relatório
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Ligue só quando <strong>você</strong> foi atrás do lead. Se o lead voltou
-                          pela campanha, deixe desligado — a reunião/venda entram pela data em que
-                          aconteceram (não precisa fechar venda para isso).
-                        </p>
+                    <button
+                      type="button"
+                      disabled={savingAttribution}
+                      onClick={() => void handleToggleFollowUp(!isFollowUp)}
+                      className={`w-full rounded-xl border-2 p-4 text-left transition-all ${
+                        isFollowUp
+                          ? "border-amber-500 bg-amber-500/15 shadow-[0_0_0_3px_rgba(245,158,11,0.25)]"
+                          : "border-border bg-muted/30 hover:border-muted-foreground/40"
+                      } ${savingAttribution ? "opacity-60" : ""}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1 min-w-0">
+                          <p className="text-sm font-semibold flex items-center gap-2">
+                            <RefreshCw
+                              className={`w-4 h-4 shrink-0 ${isFollowUp ? "text-amber-600" : ""}`}
+                            />
+                            Entrar como follow-up
+                          </p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            {isFollowUp
+                              ? "LIGADO — este lead conta no bloco Follow-up do relatório."
+                              : "DESLIGADO — reunião/venda entram pela data (não é follow-up)."}
+                          </p>
+                        </div>
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <Badge
+                            className={
+                              isFollowUp
+                                ? "bg-amber-500 text-white hover:bg-amber-500"
+                                : "bg-muted text-muted-foreground hover:bg-muted"
+                            }
+                          >
+                            {isFollowUp ? "LIGADO" : "OFF"}
+                          </Badge>
+                          <Switch
+                            checked={isFollowUp}
+                            disabled={savingAttribution}
+                            onCheckedChange={(checked) => {
+                              void handleToggleFollowUp(checked);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className={`h-6 w-11 data-[state=checked]:bg-amber-500 ${
+                              isFollowUp ? "ring-2 ring-amber-400/60" : ""
+                            }`}
+                          />
+                        </div>
                       </div>
-                      <div className="flex items-center justify-between gap-3">
-                        <Label htmlFor="follow-up-toggle" className="text-sm">
-                          Entrar como follow-up
-                        </Label>
-                        <Checkbox
-                          id="follow-up-toggle"
-                          checked={isFollowUp}
-                          disabled={savingAttribution}
-                          onCheckedChange={(checked) => {
-                            void handleToggleFollowUp(checked === true);
-                          }}
-                        />
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {isFollowUp
-                          ? "Marcado: conta no bloco Follow-up."
-                          : "Desmarcado: não entra como follow-up."}
-                      </p>
-                    </div>
+                    </button>
                     {!lead.excluded_from_reports && (
                       <Button
                         type="button"
