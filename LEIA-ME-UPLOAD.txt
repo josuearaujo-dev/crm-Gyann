@@ -1,28 +1,29 @@
-Upload manual — Relatórios + Taxas (resposta + conversão) — 2026-11-09
+Upload manual — Follow-up no relatório + reentrada de lead — 2026-11-09
 
 Substitua estes arquivos no GitHub (mesmos caminhos):
 
+- components/crm/reports-dashboard.tsx   (OBRIGATÓRIO)
+- components/crm/lead-detail.tsx         (OBRIGATÓRIO)
 - app/dashboard/reports/page.tsx
-- components/crm/reports-dashboard.tsx
-- components/crm/lead-detail.tsx
 - lib/types.ts
 - lib/contract-value.ts
 - lib/report-finance.ts
 - lib/pipeline-utils.ts
-- scripts/029_lead_contract_mrr_tcv.sql    (rodar no Supabase se ainda não rodou)
-- scripts/030_debug_vendas_campanha_setembro.sql  (opcional)
-- scripts/031_debug_taxas_campanha_setembro.sql   (opcional)
-- scripts/032_debug_noshow_comparecimento.sql     (opcional)
+- scripts/029_lead_contract_mrr_tcv.sql  (rodar no Supabase se ainda não rodou)
+- scripts/034 / 035                      (opcional, diagnóstico SQL)
 - .env.example
 - .gitignore
 
 O que muda neste pacote:
-- Taxa de Conversão = vendas ÷ reuniões REALIZADAS (feitas), não marcadas
-- Taxa de Resposta (nova) = chegou em Qualificação ÷ chegou em Tentando Contato
-  (proxy pela etapa atual do funil)
-- % Contratos MRR e % Contratos TCV
-- Demais taxas: Agendamento, MQL, No-show, Comparecimento, Inrate
-- Cadastro MRR/TCV no lead
+1) Relatórios — filtro "Escopo de leads":
+   - Só coorte (criados no período)
+   - Só follow-up (lead antigo + venda/reunião no período)
+   - Coorte + follow-up
+2) Bloco "Follow-up no período" (quando escopo = coorte):
+   - leads FU, vendas FU, reuniões, taxa conv. FU, taxa no-show FU
+3) Lead — botão "Atualizar data (reentrada na campanha)":
+   - created_at = hoje (entra na coorte atual)
+   - data original salva em metadata.original_created_at + histórico
 
 Como subir:
 1. Upload/replace no GitHub nos mesmos caminhos

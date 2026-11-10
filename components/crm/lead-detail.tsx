@@ -43,6 +43,7 @@ import {
   CheckCircle,
   MessageSquare,
   Send,
+  RefreshCw,
 } from "lucide-react";
 import {
   Popover,
@@ -138,6 +139,8 @@ export function LeadDetail({
   const [showFinishedDialog, setShowFinishedDialog] = useState(false);
   const [excludeFromReportsOpen, setExcludeFromReportsOpen] = useState(false);
   const [excludingFromReports, setExcludingFromReports] = useState(false);
+  const [reentryOpen, setReentryOpen] = useState(false);
+  const [reentering, setReentering] = useState(false);
   const [installments, setInstallments] = useState<LeadInstallment[]>([]);
   const [firstDueForGen, setFirstDueForGen] = useState(() =>
     new Date().toISOString().slice(0, 10)
@@ -642,6 +645,49 @@ export function LeadDetail({
       alert("Erro ao deletar o lead.");
     } finally {
       setExcludingFromReports(false);
+    }
+  };
+
+  /** Reentrada na campanha: atualiza created_at para hoje e guarda a data original no metadata. */
+  const handleCampaignReentry = async () => {
+    setReentering(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const prevMeta =
+        lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata)
+          ? { ...(lead.metadata as Record<string, unknown>) }
+          : {};
+      const history = Array.isArray(prevMeta.created_at_history)
+        ? [...prevMeta.created_at_history]
+        : [];
+      if (prevMeta.original_created_at == null) {
+        prevMeta.original_created_at = lead.created_at;
+      }
+      history.push({ from: lead.created_at, to: nowIso, at: nowIso });
+      prevMeta.created_at_history = history;
+      prevMeta.reentered_at = nowIso;
+
+      const { error } = await supabase
+        .from("leads")
+        .update({
+          created_at: nowIso,
+          metadata: prevMeta,
+          updated_at: nowIso,
+        })
+        .eq("id", lead.id);
+
+      if (error) {
+        console.error("[v0] Error updating lead reentry date:", error);
+        alert("Não foi possível atualizar a data do lead. Tente novamente.");
+        return;
+      }
+      setReentryOpen(false);
+      onUpdate();
+    } catch (err) {
+      console.error("[v0] Error in handleCampaignReentry:", err);
+      alert("Erro ao atualizar a data do lead.");
+    } finally {
+      setReentering(false);
     }
   };
 
@@ -1202,6 +1248,15 @@ export function LeadDetail({
                         Marcar como Finalizado
                       </Button>
                     )}
+                    <Button
+                      type="button"
+                      onClick={() => setReentryOpen(true)}
+                      variant="outline"
+                      className="w-full"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Atualizar data (reentrada na campanha)
+                    </Button>
                     {!lead.excluded_from_reports && (
                       <Button
                         type="button"
@@ -1722,6 +1777,30 @@ export function LeadDetail({
             onClick={() => void handleExcludeFromReports()}
           >
             {excludingFromReports ? "Deletando…" : "Deletar"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+
+    <AlertDialog open={reentryOpen} onOpenChange={setReentryOpen}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Atualizar data do lead (reentrada)?</AlertDialogTitle>
+          <AlertDialogDescription>
+            A data de criação passa a ser <strong>hoje</strong>, para o lead entrar na
+            <strong> coorte da campanha atual</strong> em vez de aparecer como follow-up.
+            A data original ({new Date(lead.created_at).toLocaleString("pt-BR")}) fica
+            salva no histórico do lead.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={reentering}>Cancelar</AlertDialogCancel>
+          <Button
+            type="button"
+            disabled={reentering}
+            onClick={() => void handleCampaignReentry()}
+          >
+            {reentering ? "Atualizando…" : "Atualizar data"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -82,6 +82,15 @@ function leadHasDisqualifiedTag(
   );
 }
 
+/** Escopo do relatório: coorte (created_at no período) vs follow-up (lead antigo + atividade no período). */
+type CohortScope = "cohort" | "followup" | "all";
+
+function dateInInclusiveRange(iso: string | null | undefined, start: Date, end: Date): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  return !Number.isNaN(d.getTime()) && d >= start && d <= end;
+}
+
 interface ReportsDashboardProps {
   leads: (Lead & {
     lead_tags?: { tags: { id: string; name: string; color: string; type?: string | null } }[];
@@ -165,6 +174,8 @@ export function ReportsDashboard({
 }: ReportsDashboardProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [filterMode, setFilterMode] = useState<"campaign" | "range">("campaign");
+  /** Coorte = leads criados no período; Follow-up = lead antigo com venda/reunião no período. */
+  const [cohortScope, setCohortScope] = useState<CohortScope>("cohort");
   /** Formulário = fonte do CRM (ex.: Formulario-BR / Formulario-USA). */
   const [selectedSourceId, setSelectedSourceId] = useState<string>("all");
   const [selectedCampaignId, setSelectedCampaignId] = useState<string>(
@@ -270,25 +281,60 @@ export function ReportsDashboard({
     return { rangeLeads, totalInvestment, campaignBreakdown, rangeMeetings, uncampaignedCount: uncampaignedLeads.length };
   }, [filterMode, rangeStart, rangeEnd, leads, campaigns, meetings]);
 
-  // Leads dentro do range da campanha selecionada (modo campanha)
-  const campaignLeads = useMemo(() => {
+  const periodBounds = useMemo(() => {
+    const start = new Date(`${analysisPeriod.start}T00:00:00`);
+    const end = new Date(`${analysisPeriod.end}T23:59:59`);
+    return { start, end };
+  }, [analysisPeriod.start, analysisPeriod.end]);
+
+  // Leads criados no período (coorte clássica)
+  const cohortLeads = useMemo(() => {
     if (filterMode === "range") return rangeData?.rangeLeads || [];
     if (!selectedCampaign) return [];
-    const start = new Date(selectedCampaign.start_date + "T00:00:00");
-    const end = new Date(selectedCampaign.end_date + "T23:59:59");
+    const { start, end } = periodBounds;
     return leads.filter((lead) => {
       if (lead.is_lost) return false;
       if (lead.excluded_from_reports) return false;
       const created = new Date(lead.created_at);
       return created >= start && created <= end;
     });
-  }, [leads, selectedCampaign, filterMode, rangeData]);
+  }, [leads, selectedCampaign, filterMode, rangeData, periodBounds]);
+
+  // Follow-up: criados ANTES do período, com venda (won_at) ou reunião no período
+  const followUpLeads = useMemo(() => {
+    if (filterMode === "campaign" && !selectedCampaign) return [];
+    const { start, end } = periodBounds;
+    return leads.filter((lead) => {
+      if (lead.is_lost) return false;
+      if (lead.excluded_from_reports) return false;
+      const created = new Date(lead.created_at);
+      if (created >= start) return false;
+      const soldInPeriod = dateInInclusiveRange(lead.won_at, start, end);
+      const meetingInPeriod = meetings.some(
+        (m) =>
+          m.lead_id === lead.id &&
+          m.status !== "cancelled" &&
+          meetingTouchesPeriod(m, start, end)
+      );
+      return soldInPeriod || meetingInPeriod;
+    });
+  }, [leads, meetings, filterMode, selectedCampaign, periodBounds]);
+
+  /** Base de leads conforme escopo (antes do filtro de formulário). */
+  const scopedBaseLeads = useMemo(() => {
+    if (cohortScope === "cohort") return cohortLeads;
+    if (cohortScope === "followup") return followUpLeads;
+    const byId = new Map<string, (typeof cohortLeads)[number]>();
+    for (const lead of cohortLeads) byId.set(lead.id, lead);
+    for (const lead of followUpLeads) byId.set(lead.id, lead);
+    return Array.from(byId.values());
+  }, [cohortScope, cohortLeads, followUpLeads]);
 
   /** Contagem de leads por fonte no período — opções do filtro Formulário. */
   const formSourceOptions = useMemo(() => {
     const counts = new Map<string, number>();
     let withoutSource = 0;
-    for (const lead of campaignLeads) {
+    for (const lead of scopedBaseLeads) {
       if (!lead.source_id) {
         withoutSource += 1;
         continue;
@@ -309,15 +355,20 @@ export function ReportsDashboard({
       options.push({ id: "none", name: "Sem formulário", count: withoutSource });
     }
     return options;
-  }, [campaignLeads, sources]);
+  }, [scopedBaseLeads, sources]);
 
   const filteredLeads = useMemo(() => {
-    if (selectedSourceId === "all") return campaignLeads;
+    if (selectedSourceId === "all") return scopedBaseLeads;
     if (selectedSourceId === "none") {
-      return campaignLeads.filter((lead) => !lead.source_id);
+      return scopedBaseLeads.filter((lead) => !lead.source_id);
     }
-    return campaignLeads.filter((lead) => lead.source_id === selectedSourceId);
-  }, [campaignLeads, selectedSourceId]);
+    return scopedBaseLeads.filter((lead) => lead.source_id === selectedSourceId);
+  }, [scopedBaseLeads, selectedSourceId]);
+
+  const cohortLeadIdSet = useMemo(
+    () => new Set(cohortLeads.map((l) => l.id)),
+    [cohortLeads]
+  );
 
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
   const contactAttemptColumn = useMemo(() => getContactAttemptColumn(columns), [columns]);
@@ -351,8 +402,19 @@ export function ReportsDashboard({
     // Regra temporal padronizada: relatório por coorte (leads criados no período selecionado).
     const cohortWonLeads = filteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
 
-    // Vendas válidas: ganhos da própria coorte.
-    const salesLeads = cohortWonLeads;
+    // Vendas válidas: ganhos no escopo.
+    // Follow-up só conta venda se won_at caiu no período (lead antigo + fechamento agora).
+    const { start: pStart, end: pEnd } = periodBounds;
+    const salesLeads = cohortWonLeads.filter((lead) => {
+      if (cohortScope === "cohort") return true;
+      const createdInPeriod = cohortLeadIdSet.has(lead.id);
+      if (cohortScope === "followup") {
+        return dateInInclusiveRange(lead.won_at, pStart, pEnd);
+      }
+      // all: coorte entra sempre; follow-up só com won_at no período
+      if (createdInPeriod) return true;
+      return dateInInclusiveRange(lead.won_at, pStart, pEnd);
+    });
     const totalSales = salesLeads.length;
     const byLead = indexInstallmentsByLeadId(installments);
     const { totalReceived: totalReceivedCohort, totalOutstanding: outstandingCohort, revenue } =
@@ -370,11 +432,20 @@ export function ReportsDashboard({
     const avgTicket = totalSales > 0 ? revenue / totalSales : 0;
     const contractSummary = summarizeContracts(salesLeads);
 
-    // Reuniões da coorte (já filtrada por formulário/fonte).
+    // Reuniões do escopo (já filtrada por formulário/fonte).
+    // Coorte: todas as reuniões do lead. Follow-up: só reuniões com data no período.
     const cohortLeadIds = new Set(filteredLeads.map((l) => l.id));
     const meetingsForCohort = meetings.filter((m) => {
       if (m.status === "cancelled") return false;
-      return m.lead_id != null && cohortLeadIds.has(m.lead_id);
+      if (m.lead_id == null || !cohortLeadIds.has(m.lead_id)) return false;
+      const createdInPeriod = cohortLeadIdSet.has(m.lead_id);
+      if (cohortScope === "cohort") return createdInPeriod;
+      if (cohortScope === "followup") {
+        return !createdInPeriod && meetingTouchesPeriod(m, pStart, pEnd);
+      }
+      // all
+      if (createdInPeriod) return true;
+      return meetingTouchesPeriod(m, pStart, pEnd);
     });
 
     const meetingsMarkedCount = meetingsForCohort.length;
@@ -485,6 +556,56 @@ export function ReportsDashboard({
     // Inrate = vendas ÷ leads
     const taxaInrate = totalLeads > 0 ? (totalSales / totalLeads) * 100 : 0;
 
+    // --- Follow-up (lead antigo + atividade no período), mesmo formulário ---
+    const followUpScoped = followUpLeads.filter((lead) => {
+      if (selectedSourceId === "all") return true;
+      if (selectedSourceId === "none") return !lead.source_id;
+      return lead.source_id === selectedSourceId;
+    });
+    const followUpScopedIds = new Set(followUpScoped.map((l) => l.id));
+    const followUpSalesList = followUpScoped.filter(
+      (lead) =>
+        Boolean(wonColumn && lead.column_id === wonColumn.id) &&
+        dateInInclusiveRange(lead.won_at, pStart, pEnd)
+    );
+    const followUpMeetingsList = meetings.filter(
+      (m) =>
+        m.status !== "cancelled" &&
+        m.lead_id != null &&
+        followUpScopedIds.has(m.lead_id) &&
+        meetingTouchesPeriod(m, pStart, pEnd)
+    );
+    const followUpHeldList = followUpMeetingsList.filter((m) => m.status === "done");
+    const followUpNoShowList = followUpMeetingsList.filter((m) => m.status === "no_show");
+    const followUpHeldLeadIds = new Set(
+      followUpHeldList.map((m) => m.lead_id).filter((id): id is string => Boolean(id))
+    );
+    const followUpMarkedLeadIds = new Set(
+      followUpMeetingsList.map((m) => m.lead_id).filter((id): id is string => Boolean(id))
+    );
+    const followUpNoShowLeadIds = new Set(
+      followUpNoShowList.map((m) => m.lead_id).filter((id): id is string => Boolean(id))
+    );
+    const followUpSalesFromHeld = followUpSalesList.filter((lead) => {
+      if (!followUpHeldLeadIds.has(lead.id)) return false;
+      const wonAt = closedAtMs(lead);
+      return followUpHeldList.some(
+        (m) => m.lead_id === lead.id && new Date(m.scheduled_at).getTime() <= wonAt
+      );
+    }).length;
+    const taxaFollowUpConversao =
+      followUpHeldLeadIds.size > 0
+        ? (followUpSalesFromHeld / followUpHeldLeadIds.size) * 100
+        : null;
+    const taxaFollowUpNoShow =
+      followUpMarkedLeadIds.size > 0
+        ? (followUpNoShowLeadIds.size / followUpMarkedLeadIds.size) * 100
+        : null;
+    const taxaFollowUpComparecimento =
+      followUpMarkedLeadIds.size > 0
+        ? (followUpHeldLeadIds.size / followUpMarkedLeadIds.size) * 100
+        : null;
+
     // Taxas auxiliares (já usadas em outros cards)
     const leadToSaleRate = taxaInrate;
     const qualifiedToSaleRate =
@@ -561,6 +682,15 @@ export function ReportsDashboard({
       roiPercent,
       salesFromMarkedMeetings,
       salesFromHeldMeetings,
+      followUpLeadsCount: followUpScoped.length,
+      followUpSalesCount: followUpSalesList.length,
+      followUpMeetingsMarked: followUpMeetingsList.length,
+      followUpMeetingsHeld: followUpHeldList.length,
+      followUpNoShowCount: followUpNoShowLeadIds.size,
+      taxaFollowUpConversao,
+      taxaFollowUpNoShow,
+      taxaFollowUpComparecimento,
+      followUpSalesFromHeld,
     };
   }, [
     filterMode,
@@ -576,6 +706,11 @@ export function ReportsDashboard({
     installments,
     analysisPeriod.start,
     analysisPeriod.end,
+    cohortScope,
+    cohortLeadIdSet,
+    periodBounds,
+    followUpLeads,
+    selectedSourceId,
   ]);
 
   // Gráfico: distribuição por pipeline
@@ -853,6 +988,25 @@ export function ReportsDashboard({
                   Fontes cadastradas em Webhooks (ex.: Formulario-BR / Formulario-USA)
                 </p>
               </div>
+              <div className="w-full sm:max-w-sm space-y-1">
+                <p className="text-sm font-medium">Escopo de leads</p>
+                <Select
+                  value={cohortScope}
+                  onValueChange={(v) => setCohortScope(v as CohortScope)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cohort">Só coorte (criados no período)</SelectItem>
+                    <SelectItem value="followup">Só follow-up (antigos + atividade no período)</SelectItem>
+                    <SelectItem value="all">Coorte + follow-up</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Follow-up = lead criado antes, com venda (`won_at`) ou reunião no período
+                </p>
+              </div>
             </div>
 
             {/* Filtro por campanha */}
@@ -988,7 +1142,13 @@ export function ReportsDashboard({
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Funil Principal</p>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <MetricCard title="Total de Leads" icon={Users}
-                  sub="Leads da coorte no período">
+                  sub={
+                    cohortScope === "followup"
+                      ? "Leads follow-up (criados antes do período)"
+                      : cohortScope === "all"
+                        ? "Coorte + follow-up no período"
+                        : "Leads da coorte no período"
+                  }>
                   <AnimatedNumber value={metrics.totalLeads} />
                 </MetricCard>
                 <MetricCard title="Leads Qualificados" icon={Target} iconClass="text-blue-500"
@@ -1237,6 +1397,50 @@ export function ReportsDashboard({
                 </MetricCard>
               </div>
             </div>
+
+            {/* Bloco Follow-up — sempre visível (resumo fora da coorte) */}
+            {cohortScope === "cohort" && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                  Follow-up no período
+                </p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Leads criados antes do período, com venda ou reunião dentro da janela.
+                  Não entram nas taxas da coorte acima — use o filtro &quot;Escopo de leads&quot; para analisar.
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                  <MetricCard title="Leads follow-up" icon={Users} sub="Com atividade no período">
+                    <AnimatedNumber value={metrics.followUpLeadsCount} />
+                  </MetricCard>
+                  <MetricCard title="Vendas follow-up" icon={CheckCircle} iconClass="text-green-600"
+                    sub="won_at no período">
+                    <span className="text-green-600"><AnimatedNumber value={metrics.followUpSalesCount} /></span>
+                  </MetricCard>
+                  <MetricCard title="Reuniões FU marcadas" icon={Calendar} sub="Agenda no período">
+                    <AnimatedNumber value={metrics.followUpMeetingsMarked} />
+                  </MetricCard>
+                  <MetricCard title="Reuniões FU feitas" icon={Phone} sub="done no período">
+                    <AnimatedNumber value={metrics.followUpMeetingsHeld} />
+                  </MetricCard>
+                  <MetricCard title="Taxa conv. follow-up" icon={Percent}
+                    sub="Vendas FU ÷ leads FU com reunião feita">
+                    {metrics.taxaFollowUpConversao == null ? (
+                      <span className="text-muted-foreground text-base">—</span>
+                    ) : (
+                      <><AnimatedNumber value={metrics.taxaFollowUpConversao} decimals={1} />%</>
+                    )}
+                  </MetricCard>
+                  <MetricCard title="Taxa no-show FU" icon={Percent}
+                    sub="No-show FU ÷ leads FU com reunião">
+                    {metrics.taxaFollowUpNoShow == null ? (
+                      <span className="text-muted-foreground text-base">—</span>
+                    ) : (
+                      <><AnimatedNumber value={metrics.taxaFollowUpNoShow} decimals={1} />%</>
+                    )}
+                  </MetricCard>
+                </div>
+              </div>
+            )}
 
             {/* Bloco 5 — Taxas do cliente (todas em %) */}
             <div>
