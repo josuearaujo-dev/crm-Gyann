@@ -83,6 +83,15 @@ export interface Lead {
   loss_notes?: string | null
   /** Data em que o lead entrou na coluna de vitória. */
   won_at?: string | null
+  /**
+   * Follow-up manual no relatório:
+   * - follow_up = você foi atrás do lead (só assim entra no bloco follow-up)
+   * - null = não é follow-up (reunião/venda contam pela data da atividade)
+   * - campaign_reentry = legado/opcional (não usado na UI atual)
+   */
+  attribution_type?: "follow_up" | "campaign_reentry" | null
+  /** Legado/opcional; a UI atual de follow-up não depende deste campo. */
+  attribution_at?: string | null
   /** Removido do funil e excluído das contagens de relatórios. */
   excluded_from_reports?: boolean | null
   // Relations

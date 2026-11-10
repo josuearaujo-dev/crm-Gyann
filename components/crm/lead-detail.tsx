@@ -139,8 +139,8 @@ export function LeadDetail({
   const [showFinishedDialog, setShowFinishedDialog] = useState(false);
   const [excludeFromReportsOpen, setExcludeFromReportsOpen] = useState(false);
   const [excludingFromReports, setExcludingFromReports] = useState(false);
-  const [reentryOpen, setReentryOpen] = useState(false);
-  const [reentering, setReentering] = useState(false);
+  const [isFollowUp, setIsFollowUp] = useState(lead.attribution_type === "follow_up");
+  const [savingAttribution, setSavingAttribution] = useState(false);
   const [installments, setInstallments] = useState<LeadInstallment[]>([]);
   const [firstDueForGen, setFirstDueForGen] = useState(() =>
     new Date().toISOString().slice(0, 10)
@@ -648,46 +648,33 @@ export function LeadDetail({
     }
   };
 
-  /** Reentrada na campanha: atualiza created_at para hoje e guarda a data original no metadata. */
-  const handleCampaignReentry = async () => {
-    setReentering(true);
+  /** Follow-up manual: ligado = entra no bloco follow-up; desligado = conta pela data da reunião/venda. */
+  const handleToggleFollowUp = async (enabled: boolean) => {
+    setSavingAttribution(true);
     try {
-      const nowIso = new Date().toISOString();
-      const prevMeta =
-        lead.metadata && typeof lead.metadata === "object" && !Array.isArray(lead.metadata)
-          ? { ...(lead.metadata as Record<string, unknown>) }
-          : {};
-      const history = Array.isArray(prevMeta.created_at_history)
-        ? [...prevMeta.created_at_history]
-        : [];
-      if (prevMeta.original_created_at == null) {
-        prevMeta.original_created_at = lead.created_at;
-      }
-      history.push({ from: lead.created_at, to: nowIso, at: nowIso });
-      prevMeta.created_at_history = history;
-      prevMeta.reentered_at = nowIso;
-
       const { error } = await supabase
         .from("leads")
         .update({
-          created_at: nowIso,
-          metadata: prevMeta,
-          updated_at: nowIso,
+          attribution_type: enabled ? "follow_up" : null,
+          attribution_at: null,
+          updated_at: new Date().toISOString(),
         })
         .eq("id", lead.id);
 
       if (error) {
-        console.error("[v0] Error updating lead reentry date:", error);
-        alert("Não foi possível atualizar a data do lead. Tente novamente.");
+        console.error("[v0] Error saving follow-up flag:", error);
+        alert(
+          "Não foi possível salvar. Rode o SQL scripts/036_lead_attribution_followup.sql no Supabase e tente de novo."
+        );
         return;
       }
-      setReentryOpen(false);
+      setIsFollowUp(enabled);
       onUpdate();
     } catch (err) {
-      console.error("[v0] Error in handleCampaignReentry:", err);
-      alert("Erro ao atualizar a data do lead.");
+      console.error("[v0] Error in handleToggleFollowUp:", err);
+      alert("Erro ao salvar follow-up.");
     } finally {
-      setReentering(false);
+      setSavingAttribution(false);
     }
   };
 
@@ -1248,15 +1235,37 @@ export function LeadDetail({
                         Marcar como Finalizado
                       </Button>
                     )}
-                    <Button
-                      type="button"
-                      onClick={() => setReentryOpen(true)}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      <RefreshCw className="w-4 h-4 mr-2" />
-                      Atualizar data (reentrada na campanha)
-                    </Button>
+                    <div className="rounded-lg border p-3 space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium flex items-center gap-2">
+                          <RefreshCw className="w-4 h-4" />
+                          Follow-up no relatório
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Ligue só quando <strong>você</strong> foi atrás do lead. Se o lead voltou
+                          pela campanha, deixe desligado — a reunião/venda entram pela data em que
+                          aconteceram (não precisa fechar venda para isso).
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <Label htmlFor="follow-up-toggle" className="text-sm">
+                          Entrar como follow-up
+                        </Label>
+                        <Checkbox
+                          id="follow-up-toggle"
+                          checked={isFollowUp}
+                          disabled={savingAttribution}
+                          onCheckedChange={(checked) => {
+                            void handleToggleFollowUp(checked === true);
+                          }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {isFollowUp
+                          ? "Marcado: conta no bloco Follow-up."
+                          : "Desmarcado: não entra como follow-up."}
+                      </p>
+                    </div>
                     {!lead.excluded_from_reports && (
                       <Button
                         type="button"
@@ -1777,30 +1786,6 @@ export function LeadDetail({
             onClick={() => void handleExcludeFromReports()}
           >
             {excludingFromReports ? "Deletando…" : "Deletar"}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-
-    <AlertDialog open={reentryOpen} onOpenChange={setReentryOpen}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Atualizar data do lead (reentrada)?</AlertDialogTitle>
-          <AlertDialogDescription>
-            A data de criação passa a ser <strong>hoje</strong>, para o lead entrar na
-            <strong> coorte da campanha atual</strong> em vez de aparecer como follow-up.
-            A data original ({new Date(lead.created_at).toLocaleString("pt-BR")}) fica
-            salva no histórico do lead.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={reentering}>Cancelar</AlertDialogCancel>
-          <Button
-            type="button"
-            disabled={reentering}
-            onClick={() => void handleCampaignReentry()}
-          >
-            {reentering ? "Atualizando…" : "Atualizar data"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

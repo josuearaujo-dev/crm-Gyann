@@ -82,13 +82,32 @@ function leadHasDisqualifiedTag(
   );
 }
 
-/** Escopo do relatório: coorte (created_at no período) vs follow-up (lead antigo + atividade no período). */
+/** Escopo: período normal (sem follow-up) vs só follow-up (marcação manual). */
 type CohortScope = "cohort" | "followup" | "all";
 
 function dateInInclusiveRange(iso: string | null | undefined, start: Date, end: Date): boolean {
   if (!iso) return false;
   const d = new Date(iso);
   return !Number.isNaN(d.getTime()) && d >= start && d <= end;
+}
+
+function leadIsFollowUp(lead: { attribution_type?: string | null }): boolean {
+  return lead.attribution_type === "follow_up";
+}
+
+function leadHasActivityInPeriod(
+  lead: { id: string; won_at?: string | null },
+  meetings: Meeting[],
+  start: Date,
+  end: Date
+): boolean {
+  if (dateInInclusiveRange(lead.won_at, start, end)) return true;
+  return meetings.some(
+    (m) =>
+      m.lead_id === lead.id &&
+      m.status !== "cancelled" &&
+      meetingTouchesPeriod(m, start, end)
+  );
 }
 
 interface ReportsDashboardProps {
@@ -287,36 +306,30 @@ export function ReportsDashboard({
     return { start, end };
   }, [analysisPeriod.start, analysisPeriod.end]);
 
-  // Leads criados no período (coorte clássica)
+  // Período normal (NÃO follow-up): criados no período OU com reunião/venda na data do período.
+  // Quem está marcado follow-up NÃO entra aqui — você decide no lead.
   const cohortLeads = useMemo(() => {
-    if (filterMode === "range") return rangeData?.rangeLeads || [];
-    if (!selectedCampaign) return [];
+    if (filterMode === "campaign" && !selectedCampaign) return [];
     const { start, end } = periodBounds;
     return leads.filter((lead) => {
       if (lead.is_lost) return false;
       if (lead.excluded_from_reports) return false;
+      if (leadIsFollowUp(lead)) return false;
       const created = new Date(lead.created_at);
-      return created >= start && created <= end;
+      const createdInPeriod = created >= start && created <= end;
+      return createdInPeriod || leadHasActivityInPeriod(lead, meetings, start, end);
     });
-  }, [leads, selectedCampaign, filterMode, rangeData, periodBounds]);
+  }, [leads, meetings, selectedCampaign, filterMode, periodBounds]);
 
-  // Follow-up: criados ANTES do período, com venda (won_at) ou reunião no período
+  // Follow-up: SÓ quem você marcou no lead (+ atividade no período). Sem marcação = não entra.
   const followUpLeads = useMemo(() => {
     if (filterMode === "campaign" && !selectedCampaign) return [];
     const { start, end } = periodBounds;
     return leads.filter((lead) => {
       if (lead.is_lost) return false;
       if (lead.excluded_from_reports) return false;
-      const created = new Date(lead.created_at);
-      if (created >= start) return false;
-      const soldInPeriod = dateInInclusiveRange(lead.won_at, start, end);
-      const meetingInPeriod = meetings.some(
-        (m) =>
-          m.lead_id === lead.id &&
-          m.status !== "cancelled" &&
-          meetingTouchesPeriod(m, start, end)
-      );
-      return soldInPeriod || meetingInPeriod;
+      if (!leadIsFollowUp(lead)) return false;
+      return leadHasActivityInPeriod(lead, meetings, start, end);
     });
   }, [leads, meetings, filterMode, selectedCampaign, periodBounds]);
 
@@ -365,11 +378,6 @@ export function ReportsDashboard({
     return scopedBaseLeads.filter((lead) => lead.source_id === selectedSourceId);
   }, [scopedBaseLeads, selectedSourceId]);
 
-  const cohortLeadIdSet = useMemo(
-    () => new Set(cohortLeads.map((l) => l.id)),
-    [cohortLeads]
-  );
-
   const wonColumn = useMemo(() => getWonPipelineColumn(columns), [columns]);
   const contactAttemptColumn = useMemo(() => getContactAttemptColumn(columns), [columns]);
   const qualificationStageColumn = useMemo(
@@ -399,21 +407,17 @@ export function ReportsDashboard({
     const qualificationRate = totalLeads > 0 ? (qualifiedCount / totalLeads) * 100 : 0;
     const disqualificationRate = totalLeads > 0 ? (disqualifiedCount / totalLeads) * 100 : 0;
 
-    // Regra temporal padronizada: relatório por coorte (leads criados no período selecionado).
-    const cohortWonLeads = filteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
-
-    // Vendas válidas: ganhos no escopo.
-    // Follow-up só conta venda se won_at caiu no período (lead antigo + fechamento agora).
+    // Vendas do período: por data do fechamento (won_at), não pela criação do lead.
     const { start: pStart, end: pEnd } = periodBounds;
+    const cohortWonLeads = filteredLeads.filter((l) => wonColumn && l.column_id === wonColumn.id);
     const salesLeads = cohortWonLeads.filter((lead) => {
-      if (cohortScope === "cohort") return true;
-      const createdInPeriod = cohortLeadIdSet.has(lead.id);
-      if (cohortScope === "followup") {
-        return dateInInclusiveRange(lead.won_at, pStart, pEnd);
+      if (dateInInclusiveRange(lead.won_at, pStart, pEnd)) return true;
+      // Legado sem won_at: só se o lead foi criado no período
+      if (!lead.won_at) {
+        const created = new Date(lead.created_at);
+        return created >= pStart && created <= pEnd;
       }
-      // all: coorte entra sempre; follow-up só com won_at no período
-      if (createdInPeriod) return true;
-      return dateInInclusiveRange(lead.won_at, pStart, pEnd);
+      return false;
     });
     const totalSales = salesLeads.length;
     const byLead = indexInstallmentsByLeadId(installments);
@@ -432,19 +436,11 @@ export function ReportsDashboard({
     const avgTicket = totalSales > 0 ? revenue / totalSales : 0;
     const contractSummary = summarizeContracts(salesLeads);
 
-    // Reuniões do escopo (já filtrada por formulário/fonte).
-    // Coorte: todas as reuniões do lead. Follow-up: só reuniões com data no período.
+    // Reuniões pela data da agenda no período (escopo já exclui/inclui follow-up).
     const cohortLeadIds = new Set(filteredLeads.map((l) => l.id));
     const meetingsForCohort = meetings.filter((m) => {
       if (m.status === "cancelled") return false;
       if (m.lead_id == null || !cohortLeadIds.has(m.lead_id)) return false;
-      const createdInPeriod = cohortLeadIdSet.has(m.lead_id);
-      if (cohortScope === "cohort") return createdInPeriod;
-      if (cohortScope === "followup") {
-        return !createdInPeriod && meetingTouchesPeriod(m, pStart, pEnd);
-      }
-      // all
-      if (createdInPeriod) return true;
       return meetingTouchesPeriod(m, pStart, pEnd);
     });
 
@@ -707,7 +703,6 @@ export function ReportsDashboard({
     analysisPeriod.start,
     analysisPeriod.end,
     cohortScope,
-    cohortLeadIdSet,
     periodBounds,
     followUpLeads,
     selectedSourceId,
@@ -998,13 +993,14 @@ export function ReportsDashboard({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="cohort">Só coorte (criados no período)</SelectItem>
-                    <SelectItem value="followup">Só follow-up (antigos + atividade no período)</SelectItem>
-                    <SelectItem value="all">Coorte + follow-up</SelectItem>
+                    <SelectItem value="cohort">Período (sem follow-up)</SelectItem>
+                    <SelectItem value="followup">Só follow-up (marcados no lead)</SelectItem>
+                    <SelectItem value="all">Período + follow-up</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Follow-up = lead criado antes, com venda (`won_at`) ou reunião no período
+                  Follow-up só entra se você marcar no lead. Sem marcar: reunião/venda contam pela data
+                  em que aconteceram.
                 </p>
               </div>
             </div>
@@ -1144,10 +1140,10 @@ export function ReportsDashboard({
                 <MetricCard title="Total de Leads" icon={Users}
                   sub={
                     cohortScope === "followup"
-                      ? "Leads follow-up (criados antes do período)"
+                      ? "Só leads marcados como follow-up"
                       : cohortScope === "all"
-                        ? "Coorte + follow-up no período"
-                        : "Leads da coorte no período"
+                        ? "Período + follow-up"
+                        : "Criados no período ou com atividade na data (sem follow-up)"
                   }>
                   <AnimatedNumber value={metrics.totalLeads} />
                 </MetricCard>
@@ -1405,8 +1401,7 @@ export function ReportsDashboard({
                   Follow-up no período
                 </p>
                 <p className="text-xs text-muted-foreground mb-3">
-                  Leads criados antes do período, com venda ou reunião dentro da janela.
-                  Não entram nas taxas da coorte acima — use o filtro &quot;Escopo de leads&quot; para analisar.
+                  Só entram leads que você marcou como Follow-up no detalhe. Sem marcação, não entram aqui.
                 </p>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
                   <MetricCard title="Leads follow-up" icon={Users} sub="Com atividade no período">
